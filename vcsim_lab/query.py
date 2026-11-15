@@ -21,7 +21,14 @@ from pyVmomi import vim
 
 from . import devices
 from .config import DISK_LAYOUT_EXTRA_CONFIG_KEY
-from .vcenter import connect, disconnect, list_objs, retrieve_props_multi, safe_name
+from .vcenter import (
+    connect,
+    disconnect,
+    list_objs,
+    retrieve_props,
+    retrieve_props_multi,
+    safe_name,
+)
 
 
 def _disk_label_number(device) -> int:
@@ -33,6 +40,88 @@ def _disk_label_number(device) -> int:
         return int(label.rsplit(" ", 1)[1])
     except (ValueError, IndexError):
         return 1 << 30
+
+
+def _isoformat(value):
+    """A datetime (or anything with .isoformat) as an ISO string, else
+    str(value) — snapshot createTime arrives as a datetime from
+    pyVmomi, but the helper stays tolerant of plain strings."""
+    if value is None:
+        return None
+    iso = getattr(value, "isoformat", None)
+    return iso() if callable(iso) else str(value)
+
+
+def _snapshot_tree_entries(trees) -> tuple[list[dict], dict[str, str]]:
+    """Flatten a snapshot tree (pre-order) into plain dicts.
+
+    Returns (entries, moid -> name): the second map resolves the
+    currentSnapshot MoRef to a name without another round trip. Each
+    entry carries the snapshot's name, description, numeric id, power
+    state at capture time and creation time. A VM with no snapshots
+    has an empty rootSnapshotList and yields ([], {}).
+    """
+    entries: list[dict] = []
+    by_moid: dict[str, str] = {}
+
+    def _walk(nodes):
+        for node in nodes or []:
+            snap_ref = getattr(node, "snapshot", None)
+            moid = getattr(snap_ref, "_moId", None) if snap_ref is not None else None
+            if moid is not None:
+                by_moid[moid] = getattr(node, "name", None)
+            state = getattr(node, "state", None)
+            entries.append(
+                {
+                    "name": getattr(node, "name", None),
+                    "description": getattr(node, "description", "") or "",
+                    "id": getattr(node, "id", None),
+                    "state": str(state) if state is not None else None,
+                    "create_time": _isoformat(getattr(node, "createTime", None)),
+                }
+            )
+            _walk(getattr(node, "childSnapshotList", None))
+
+    _walk(trees)
+    return entries, by_moid
+
+
+def _retrieve_snapshot_props(si, vms) -> dict:
+    """Best-effort snapshot state for each VM.
+
+    Returns {moId: {"snapshots": [...], "current_snapshot": name |
+    None}}. Snapshot state comes from leaf retrieves
+    (``snapshot.rootSnapshotList``, ``snapshot.currentSnapshot``) —
+    the whole ``vm.snapshot`` object is not read directly, for the
+    same deserialization reasons as ``vm.runtime`` (see
+    ``vcenter.retrieve_props``). A VM whose snapshot state cannot be
+    read at all gets ``"snapshots": None`` (unknown, not zero) so
+    verify skips the check instead of failing it; a VM with no
+    snapshots gets an empty list. A batched failure (e.g. one VM's
+    tree not deserializing) falls back to per-VM retrieves so one bad
+    VM does not poison the rest.
+    """
+    paths = ["snapshot.rootSnapshotList", "snapshot.currentSnapshot"]
+    try:
+        leaf = retrieve_props_multi(si, vms, vim.VirtualMachine, paths)
+    except Exception:  # noqa: BLE001 — snapshot state must not break the summary
+        leaf = {}
+        for vm in vms:
+            try:
+                leaf[vm._moId] = retrieve_props(si, vm, vim.VirtualMachine, paths)
+            except Exception:  # noqa: BLE001 — per-VM best effort
+                continue
+    out = {}
+    for vm in vms:
+        props = leaf.get(vm._moId)
+        if props is None:
+            out[vm._moId] = {"snapshots": None, "current_snapshot": None}
+            continue
+        entries, by_moid = _snapshot_tree_entries(props.get("snapshot.rootSnapshotList"))
+        current = props.get("snapshot.currentSnapshot")
+        current_name = by_moid.get(getattr(current, "_moId", None)) if current is not None else None
+        out[vm._moId] = {"snapshots": entries, "current_snapshot": current_name}
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -128,11 +217,13 @@ def summarize_vm(
     """Everything the lab tracks about one VM, as plain JSON-able data.
 
     ``runtime`` carries leaf properties fetched by ``summarize_lab``
-    (power state, host name, CBT flag, boot delay, tools status) —
-    ``vm.runtime`` / ``vm.summary`` as whole objects cannot be
-    deserialized against vcsim (see ``vcenter.retrieve_props``), so they
-    are never touched here. ``declared`` is the VM's resolved assignment
-    (from ``config.resolve_random_assignments``), used to show
+    (power state, host name, CBT flag, boot delay, tools status,
+    snapshots) — ``vm.runtime`` / ``vm.summary`` / ``vm.snapshot`` as
+    whole objects cannot be deserialized against vcsim (see
+    ``vcenter.retrieve_props``), so they are never touched here except
+    for a best-effort snapshot fallback when no leaf data was passed.
+    ``declared`` is the VM's resolved assignment (from
+    ``config.resolve_random_assignments``), used to show
     declared-vs-live values — notably for tools status, which vcsim
     never reports (see README).
     """
@@ -188,6 +279,21 @@ def summarize_vm(
         guest_tools_status, tools_running_status, ip = None, None, None
     tools_status = runtime.get("tools_status", guest_tools_status)
     tools_running_status = runtime.get("tools_running_status", tools_running_status)
+    # Snapshots: prefer the leaf retrieve (None there means the state
+    # could not be read — unknown, not zero). Without leaf data, try
+    # the direct read, best effort: vm.snapshot as a whole object is
+    # unreliable against vcsim, so a failure means "unknown".
+    if "snapshots" in runtime:
+        snapshots = runtime["snapshots"]
+        current_snapshot = runtime.get("current_snapshot")
+    else:
+        try:
+            snapshots, _ = _snapshot_tree_entries(
+                getattr(vm.snapshot, "rootSnapshotList", None)
+            )
+        except Exception:  # noqa: BLE001 — direct snapshot read is best effort
+            snapshots = None
+        current_snapshot = None
     disk_entries = [_disk_info(d, datastore_names) for d in disks]
     # Attach the declared basic/dynamic type + volume to each live disk
     # (matched by 1-based index) when the lab file was loaded — the
@@ -234,6 +340,11 @@ def summarize_vm(
         "tools_status": tools_status,
         "tools_running_status": tools_running_status,
         "ip": ip,
+        # Snapshots: None when the state could not be read (unknown),
+        # an empty list when the VM genuinely has none.
+        "snapshots": snapshots,
+        "snapshot_count": len(snapshots) if snapshots is not None else None,
+        "current_snapshot": current_snapshot,
     }
     if declared is not None:
         summary["declared"] = declared
@@ -241,6 +352,10 @@ def summarize_vm(
         # (guest-reported, no setter API); flag a declared/live gap
         # rather than silently showing one of them.
         summary["tools_status_mismatch"] = tools_status != declared.get("tools_status")
+        if "snapshots" in declared and snapshots is not None:
+            summary["snapshot_mismatch"] = [s["name"] for s in snapshots] != declared[
+                "snapshots"
+            ]
     return summary
 
 
@@ -278,6 +393,9 @@ def summarize_lab(si, names: list[str] | None = None, declared: dict | None = No
         ],
     )
     host_names = {h._moId: h.name for h in list_objs(si.RetrieveContent(), vim.HostSystem)}
+    # Snapshot state is a separate best-effort retrieve so a failure
+    # there never breaks the main summary (see _retrieve_snapshot_props).
+    snapshot_props = _retrieve_snapshot_props(si, vms)
     summaries = []
     for vm in vms:
         # A VM missing from the leaf result is a stale ContainerView
@@ -287,6 +405,7 @@ def summarize_lab(si, names: list[str] | None = None, declared: dict | None = No
             continue
         props = leaf.get(vm._moId, {})
         host = props.get("runtime.host")
+        snap = snapshot_props.get(vm._moId, {"snapshots": None, "current_snapshot": None})
         summaries.append(
             summarize_vm(
                 vm,
@@ -297,6 +416,8 @@ def summarize_lab(si, names: list[str] | None = None, declared: dict | None = No
                     "boot_delay_ms": props.get("config.bootOptions.bootDelay"),
                     "tools_status": props.get("guest.toolsStatus"),
                     "tools_running_status": props.get("guest.toolsRunningStatus"),
+                    "snapshots": snap["snapshots"],
+                    "current_snapshot": snap["current_snapshot"],
                 },
                 declared=(declared or {}).get(vm.name),
             )
@@ -493,6 +614,9 @@ def print_table(summaries: list[dict]) -> None:
             f"  cbt={s['cbt']} fast_boot={s['fast_boot']} "
             f"(bootDelay {s['boot_delay_ms']}ms) {tools_line}"
         )
+        if s.get("snapshot_count"):
+            names = ", ".join(x["name"] for x in s["snapshots"])
+            print(f"  snapshots: {names} ({s['snapshot_count']})")
         print(f"  controllers: {', '.join(s['controllers'])}")
         print(f"  disks: {disks}")
         # When the lab file was not loaded there is no declared type on

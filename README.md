@@ -2,11 +2,12 @@
 
 Build varied vCenter inventories in [vcsim](https://github.com/vmware/govmomi)
 (the govmomi vSphere simulator) with plain Python + pyVmomi — the
-`default` environment has 22 VMs spanning Windows, Linux and BSD, BIOS
-and EFI, NVMe/PVSCSI/LSI storage, standard / distributed / NSX networks,
-TPM, Secure Boot, 3D video, NVIDIA and AMD GPUs (passthrough, dynamic
-and vGPU), three VM templates, and two virtual appliances in a vApp —
-then query it back the way you would query a real vCenter.
+`default` environment has 23 VMs spanning Windows, Linux, BSD and
+Solaris, BIOS and EFI, NVMe/PVSCSI/LSI storage, standard / distributed /
+NSX networks, TPM, Secure Boot, 3D video, NVIDIA and AMD GPUs
+(passthrough, dynamic and vGPU), three VM templates, two virtual
+appliances in a vApp, and VM snapshots (0, 1 or 2 per VM) — then query
+it back the way you would query a real vCenter.
 
 Everything is declarative: edit an environment's `vms.yaml`, run one
 command, get the lab. The builder is idempotent (re-runs skip existing
@@ -16,11 +17,11 @@ per directory under `environments/`, each with its own vcsim process,
 lab and storage model — the endpoints stay the same, and you switch
 which environment they serve.
 
-Validated end to end against govmomi **v0.56.2** on 2026-11-13:
-full build 22 VMs / 77 steps / 0 failed, verify 0 failures
-(5 Secure Boot warnings + 18 tools-status warnings — both vcsim
+Validated end to end against govmomi **v0.56.2** on 2026-11-14:
+full build 23 VMs / 91 steps / 0 failed, verify 0 failures
+(5 Secure Boot warnings + 19 tools-status warnings — both vcsim
 limitations, see below), and a save/load round-trip that restores
-all 22 VMs.
+all 23 VMs including all 16 snapshots.
 
 ## Quickstart
 
@@ -58,9 +59,9 @@ for several) or `docker compose down`.
 
 ```
 environments/            one vCenter simulation per directory
-  default/               the full lab (22 VMs, port 8989)
+  default/               the full lab (23 VMs, port 8989)
     env.yaml             name, description, vcsim port, inventory flags
-    vms.yaml             the lab: 22 VMs, folders, pools, vApps, networks (single source of truth)
+    vms.yaml             the lab: 23 VMs, folders, pools, vApps, networks (single source of truth)
     storage.yaml         host storage model: arrays, LUNs, fabric HBAs, LUN -> datastore
   dev/                   small 3-VM environment (port 8990) — template for new environments
     env.yaml / vms.yaml / storage.yaml
@@ -109,7 +110,8 @@ tests/test_config.py     4 offline tests (config loading)
 tests/test_vcenter.py    2 offline tests (network lookup)
 tests/test_environments.py 19 offline tests (environment discovery, validation, env_info)
 tests/test_api.py        37 offline tests (API routes, filters, errors, environment switching, proxy forwarding)
-                         run all: pytest tests/ -q (187 tests, no vCenter needed)
+tests/test_snapshots.py  31 offline tests (snapshots, Solaris guest ID, toolsOk spread, verify)
+                         run all: pytest tests/ -q (219 tests, no vCenter needed)
 ```
 
 ## The lab
@@ -137,6 +139,7 @@ smaller shape (2 cluster hosts + 1 standalone host, 2 datastores) with
 | rhel9-db | RHEL 9 | 8 / 32 GB | BIOS | PVSCSI 80G + 500G eager + 200G | DVPG0 vmxnet3 | CD-ROM, 3 datastores |
 | sles15-sap | SLES 15 | 8 / 32 GB | EFI + Secure Boot + TPM | NVMe 150G + 200G thin | DVPG0 vmxnet3 | CD-ROM first: cdrom > disk |
 | freebsd13-nas | FreeBSD 13 | 2 / 4 GB | BIOS, vmx-19 | LSI Logic 60G + 2× LSI SAS 200G | VM Network e1000e | |
+| solaris11-db | Oracle Solaris 11 | 2 / 4 GB | BIOS, vmx-19 | LSI SAS 80G + 200G thin | VM Network e1000 | 1 snapshot (`baseline`), toolsOk declared |
 | centos8-legacy | CentOS 8 | 2 / 2 GB | BIOS, vmx-19 | LSI Logic 60G thick lazy + 100G thin | VM Network e1000 | boot disk > network |
 | ubuntu-k8s-node | Ubuntu | 4 / 8 GB | BIOS, hot-add | NVMe 100G + 100G thin | DVPG0 + DVPG1 | boot disk > network |
 | ubuntu-nvidia-a100-pt | Ubuntu | 16 / 64 GB | EFI | NVMe 500G thin | DVPG0 vmxnet3 | GPU passthrough, NVIDIA A100 80GB |
@@ -210,16 +213,16 @@ container itself is created with `ResourcePool.CreateVApp` (a
 
 ### Firmware and disks
 
-The firmware mix is deliberately balanced: **10 BIOS / 12 EFI**. The
+The firmware mix is deliberately balanced: **11 BIOS / 12 EFI**. The
 BIOS side is the legacy and FreeBSD half of the lab (Debian, CentOS,
-FreeBSD, both appliances, the database host, the k8s worker, two of the
-three templates, and the Windows Server 2019 file server); EFI is
-required where the VM has a vTPM or Secure Boot — the loader rejects
-TPM or Secure Boot on a BIOS VM — and for the Windows 11 VMs. The
-templates span both firmwares (Windows Server 2022 on EFI, Ubuntu and
-RHEL on BIOS), so cloning covers both boot modes.
+FreeBSD, Solaris, both appliances, the database host, the k8s worker,
+two of the three templates, and the Windows Server 2019 file server);
+EFI is required where the VM has a vTPM or Secure Boot — the loader
+rejects TPM or Secure Boot on a BIOS VM — and for the Windows 11 VMs.
+The templates span both firmwares (Windows Server 2022 on EFI, Ubuntu
+and RHEL on BIOS), so cloning covers both boot modes.
 
-**13 of the 22 VMs have 2+ disks** (40 disks in total), spread across
+**14 of the 23 VMs have 2+ disks** (42 disks in total), spread across
 NVMe, PVSCSI, LSI SAS and LSI Logic controllers, thin and thick
 provisioning, and — for the multi-datastore VMs — the builder's
 cross-datastore directory pre-creation (see below).
@@ -261,6 +264,39 @@ the live extraConfig value against the declared layout. A VM built
 before the feature existed (no extraConfig key) warns instead of
 failing, since the layout is declared-only by nature.
 
+### Snapshots
+
+VMs declare snapshots in `vms.yaml` — the lab deliberately spans 0, 1
+and 2 snapshots per VM (5 VMs with 2, 6 with 1, 12 with none; 16
+snapshots in total):
+
+```yaml
+  - name: win2022-sql
+    snapshots:
+      - { name: baseline, description: "SQL Server installed, databases created" }
+      - { name: pre-patch, description: "Before monthly Windows patching" }
+```
+
+The builder creates each snapshot after the VM's device extras and
+power-state step (`vm.CreateSnapshot`, `memory=False`,
+`quiesce=False`), so snapshots work on powered-off, powered-on and
+suspended VMs alike and capture the VM's final state. Snapshots are
+only created for freshly built VMs — a re-run over an existing VM
+skips them, like the create step (verified live: a re-run leaves the
+snapshot count at 16). Templates cannot have snapshots: vSphere
+forbids snapshotting a template, so the loader rejects it. Unlike
+tools status, snapshots are real state, not declared-only: vcsim
+creates them and serves the tree back — names, descriptions, ids and
+creation times all round-trip, `currentSnapshot` resolves to the most
+recent snapshot, and a save/load round-trip restores all 16. The query
+tool shows each VM's snapshots (`snapshots: baseline, pre-patch (2)`)
+and the API serves them in the per-VM summaries; `verify.py` checks
+the live snapshot names against the declared list as a core check. One
+vcsim gap: the snapshot tree's `state` field always reads back
+`poweredOff`, regardless of the VM's power state when the snapshot was
+taken — so the lab reports it but never verifies against it (see
+below).
+
 ### Randomized VM attributes
 
 Four per-VM attributes vary across the lab — Changed Block Tracking
@@ -289,9 +325,12 @@ reconfig — the VM is powered off first, since real vCenter requires
 that — and the power-state step restores the target state afterwards).
 The build report records each VM's assigned values (`assigned: cbt=…
 power=… fast_boot=… tools=…`), and `verify.py` checks the live lab
-against the same resolution. With seed 42 the lab lands at 9 poweredOn
-/ 6 suspended / 7 poweredOff, CBT on 9/22, fast-boot 8/22, and all four
-tools statuses declared.
+against the same resolution. With seed 42 the lab lands at 10 poweredOn
+/ 6 suspended / 7 poweredOff, CBT on 10/23, fast-boot 9/23, and all
+four tools statuses declared — five VMs declare `toolsOk` explicitly
+(`win2022-sql`, `debian12-web`, `solaris11-db`, `ubuntu-k8s-node`,
+`truenas-storage`: Windows, Debian, Solaris, Ubuntu and FreeBSD), and
+two more draw it from the seed.
 
 What vcsim serves vs. what is declared-only (probed live against
 v0.56.2):
@@ -301,7 +340,7 @@ v0.56.2):
 | CBT | `ConfigSpec.changeTrackingEnabled` | Yes — accepted in create + reconfig specs, reads back | Set in the create spec; reconciled on re-runs; **core** verify check |
 | Power state | `runtime.powerState` | Yes — PowerOn, PowerOff and `SuspendVM_Task` all work; suspended reads back as `suspended` | Enforced after create (suspend = power on, then suspend); **core** verify check |
 | Fast boot | `bootOptions.bootDelay` | Yes — stored and served back | **There is no native vSphere VM "fast boot" setting** (the only quick-boot fields are host-level ESXi Quick Boot). The lab represents it as `bootDelay = 0` (boot immediately) vs. the standard 3000 ms; **core** verify check |
-| Tools status | `GuestInfo.toolsStatus` | No — always `toolsNotInstalled` / `guestToolsNotRunning`, in every power state; no setter API exists | Declared only. The query tool shows live + declared and flags mismatches; **best-effort** verify warning |
+| Tools status | `GuestInfo.toolsStatus` | No — always `toolsNotInstalled` / `guestToolsNotRunning`, in every power state; no setter API exists | Declared only. Five VMs declare `toolsOk` explicitly (Windows, Debian, Solaris, Ubuntu, FreeBSD) and the live value is still `toolsNotInstalled` for all 23 — the query tool shows live + declared and flags mismatches; **best-effort** verify warning |
 
 Templates are exempt from power-state assignment (they always stay
 `poweredOff`); the two appliances keep explicit `power_state:
@@ -317,7 +356,7 @@ switch which environment they serve.
 
 | Environment | Port | Shape | VMs |
 |---|---|---|---|
-| `default` | 8989 | 1 cluster, 3 hosts + 1 standalone, 3 datastores | 22 (the full lab) |
+| `default` | 8989 | 1 cluster, 3 hosts + 1 standalone, 3 datastores | 23 (the full lab) |
 | `dev` | 8990 | 1 cluster, 2 hosts + 1 standalone, 2 datastores | 3 (small template env) |
 
 Each environment is three files:
@@ -507,9 +546,9 @@ Implementation notes (`vcsim_lab/api.py`, runner `scripts/serve_api.py`):
 - The endpoints reuse the existing read paths — `query.summarize_lab`,
   `list_inventory`, `list_host_pci`, `storage.summarize_storage` — so
   the API shows exactly what the query tools show, including the
-  declared-vs-live values (CBT, power state, tools status, disk layout)
-  from the environment's `vms.yaml`. No new inventory logic lives in
-  the API.
+  declared-vs-live values (CBT, power state, tools status, disk layout,
+  snapshots) from the environment's `vms.yaml`. No new inventory logic
+  lives in the API.
 - At startup the API builds an environment registry from
   `environments/*/env.yaml`: one target per environment, each with its
   own vcsim port (from `env.yaml`) and its declared lab/storage models
@@ -747,6 +786,19 @@ template VMs alike — vcsim never simulates guest tools, and there is no
 setter API for it in vSphere at all. The lab therefore declares the
 expected tools status per VM and shows declared-vs-live instead of
 pretending to set it.
+
+**Snapshots round-trip, except the tree's power state.** Probed live:
+`CreateSnapshot` (memory=False, quiesce=False) works on powered-off,
+powered-on and suspended VMs, and `snapshot.rootSnapshotList` /
+`snapshot.currentSnapshot` serve back names, descriptions, numeric ids
+and creation times intact (read via leaf retrieve — the whole
+`vm.snapshot` object is not touched, for the same deserialization
+reasons as `vm.runtime`). The current snapshot is the most recent one
+created. One gap: every tree node's `state` reads back `poweredOff`
+regardless of the VM's power state when the snapshot was taken, so the
+query tool reports the field but verify never checks it. Snapshots also
+survive a `govc object.save` / `-load` round-trip (all 16 restored with
+the 23 VMs).
 
 **vAppConfig is fully served.** `vAppConfig` on a VM (`VmConfigSpec`
 with `ProductSpec`/`PropertySpec` entries, operation `add`) is accepted

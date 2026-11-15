@@ -396,6 +396,28 @@ def apply_vapp_config(si, vm: vim.VirtualMachine, spec: VmSpec, report: VmReport
     )
 
 
+def apply_snapshots(si, vm: vim.VirtualMachine, spec: VmSpec, report: VmReport) -> None:
+    """Create the VM's declared snapshots (in listed order).
+
+    memory=False (no memory dump) and quiesce=False, so snapshots work
+    on powered-off, powered-on and suspended VMs alike — no guest
+    cooperation is needed. Runs after the power-state step so each
+    snapshot captures the VM's final configuration and power state.
+    Only called for freshly created VMs (see build_one_vm): the
+    builder never reconciles snapshots on a VM that already exists,
+    matching the create rule — use --recreate to rebuild one.
+    """
+    if not spec.snapshots:
+        report.add("snapshots", "skipped", "no snapshots declared")
+        return
+    for snap in spec.snapshots:
+        task = vm.CreateSnapshot(
+            name=snap.name, description=snap.description, memory=False, quiesce=False
+        )
+        wait_for_task(si, task, label=f"create snapshot {snap.name!r} on {spec.name}")
+    report.add("snapshots", "ok", ", ".join(s.name for s in spec.snapshots))
+
+
 def mark_as_template(si, vm: vim.VirtualMachine, spec: VmSpec, report: VmReport) -> None:
     """Mark the VM as a template (config.template = true).
 
@@ -504,6 +526,12 @@ def build_one_vm(
         # already in its assigned state), so a re-run reconciles a VM
         # whose assignment changed.
         ("power-state", lambda: apply_power_state(si, vm, spec, assigned, report)),
+        # Snapshots run after the power-state step (so they capture the
+        # final state) and only for freshly created VMs — never on a
+        # re-run over an existing VM (same rule as the create step).
+        ("snapshots", lambda: apply_snapshots(si, vm, spec, report))
+        if spec.snapshots and report.created
+        else (None, None),
         # Template marking runs LAST, after every device extra.
         ("template", lambda: mark_as_template(si, vm, spec, report))
         if spec.template

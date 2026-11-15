@@ -19,6 +19,12 @@ The basic/dynamic disk layout is declared-only (no vSphere property),
 but VMs with dynamic disks carry the layout in extraConfig, so verify
 checks the live extraConfig value against the declared layout when
 present, and warns when the live VM carries no layout at all.
+
+Snapshots are a core check: vcsim creates them and serves the tree
+back (names included), so the live snapshot names must match the
+declared list. When the live summary carries no snapshot state at all
+(None — the leaf retrieve failed), the check is skipped rather than
+failed, the same way CBT and boot delay skip on missing live values.
 """
 
 from __future__ import annotations
@@ -136,6 +142,17 @@ def verify_vm(
     _check("nic count", len(spec.nics), len(live["nics"]), failures, warnings)
     _check("cdrom", spec.cdrom is not None, live["cdrom"], failures, warnings)
     _check("video_3d", spec.video_3d, live["video_3d"], failures, warnings)
+    # Snapshots are core: vcsim creates them and serves the tree back
+    # (names included). Skipped when the live summary has no snapshot
+    # state (None — the leaf retrieve failed, not "zero snapshots").
+    if live.get("snapshots") is not None:
+        _check(
+            "snapshots",
+            [s.name for s in spec.snapshots],
+            [s["name"] for s in live["snapshots"]],
+            failures,
+            warnings,
+        )
 
     # Best-effort: the simulator may legitimately refuse these.
     _check("tpm", spec.tpm, live["tpm"], failures, warnings, best_effort=True)

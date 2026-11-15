@@ -421,3 +421,45 @@ Render mode, both labs built, API serving with active env `default`,
 switching + `?env=` override + proxied `/sdk` for both environments
 proven with curl and a real pyVmomi client, TERM-trap cleanup
 verified). 188 tests.
+
+## 18. 2026-11-14 18:56 — toolsOk VMs, a Solaris VM, and 0/1/2 snapshots
+
+> Can I have some VMs with vm.guest.toolsStatus equal to toolsOk...
+> Also, I want to have an OS with Solaris OS. And VMs with 0, 1, 2
+> snapshots
+
+Outcome: three features in the default environment (dev unchanged),
+lab now 23 VMs. (1) Five VMs declare `tools_status: toolsOk`
+explicitly — `win2022-sql` (Windows), `debian12-web` (Debian),
+`solaris11-db` (Solaris), `ubuntu-k8s-node` (Ubuntu, already had it),
+`truenas-storage` (FreeBSD) — plus two more that draw it from seed
+42, so 7/23 declare toolsOk. Declared-only, as before: vcsim always
+reports `toolsNotInstalled` live, so the query tool shows
+declared-vs-live and verify warns (19 tools-status warnings, no
+failures); the README says so next to the existing tools-status note.
+(2) New VM `solaris11-db` (Oracle Solaris 11, `solaris11_64Guest`,
+BIOS, 2 vCPU / 4096 MB, 2 disks, VM Network, `lab-linux` folder,
+powered on, CBT on, toolsOk declared, 1 snapshot); the Solaris guest
+IDs (`solaris10/11_64Guest`, `solaris10/11Guest`) were added to
+`config.KNOWN_GUEST_IDS`. (3) New per-VM `snapshots:` list in
+`vms.yaml` (name + optional description): 5 VMs with 2 snapshots, 6
+with 1, 12 with none (16 total). The loader rejects snapshots on
+templates (vSphere forbids it) and duplicate names; the builder
+creates them after the power-state step (`CreateSnapshot`,
+memory=False, quiesce=False — works in any power state) and only for
+freshly created VMs, so a re-run creates no duplicates (verified
+live: still 16 after a re-run). Query reads the tree via leaf
+retrieve (`snapshot.rootSnapshotList`, `snapshot.currentSnapshot`)
+with a best-effort fallback that reports unreadable state as unknown
+rather than zero; verify checks live snapshot names as a core check
+(skipped when the state is unreadable); the API serves snapshots in
+the per-VM summaries. Live-validated against vcsim v0.56.2: full
+build 23 VMs / 91 steps / 0 failed, verify 0 failures (5 Secure Boot
++ 19 tools-status warnings), live snapshot distribution 12×0 / 6×1 /
+5×2 matches declared exactly, Solaris VM confirmed with the right
+guest ID, API `/api/vms/solaris11-db` serves the snapshot fields, and
+a save/load round-trip restores all 23 VMs and all 16 snapshots.
+One vcsim gap found and documented: the snapshot tree's `state` field
+always reads back `poweredOff` regardless of the VM's power state at
+capture time, so it is reported but never verified. 219 tests (31 new
+in `tests/test_snapshots.py`).

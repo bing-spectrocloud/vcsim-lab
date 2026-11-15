@@ -97,6 +97,10 @@ KNOWN_GUEST_IDS = {
     "sles15_64Guest",
     "freebsd13_64Guest",
     "freebsd14_64Guest",
+    "solaris10_64Guest",
+    "solaris10Guest",
+    "solaris11_64Guest",
+    "solaris11Guest",
     "vmwarePhoton64Guest",
     "otherLinux64Guest",
     "otherGuest",
@@ -183,6 +187,23 @@ class VAppPropertySpec:
 
 
 @dataclass
+class SnapshotSpec:
+    """One VM snapshot, created by the builder after the VM's device
+    extras (see build.apply_snapshots).
+
+    Snapshots are created with memory=False (no memory dump) and
+    quiesce=False, so they work on powered-off, powered-on and
+    suspended VMs alike. vSphere forbids snapshotting a template, so
+    the loader rejects snapshots on template VMs. Names are unique
+    within a VM (vSphere allows duplicates, but the lab keeps them
+    distinct so verify can match by name).
+    """
+
+    name: str  # e.g. "baseline", "pre-patch"
+    description: str = ""
+
+
+@dataclass
 class VAppSpec:
     """OVF product info + properties for a virtual appliance VM.
 
@@ -250,6 +271,11 @@ class VmSpec:
     # Dynamic-disk volumes (Windows only, declared-only — see
     # VolumeSpec). A VM with no dynamic disks has no volumes.
     volumes: list[VolumeSpec] = field(default_factory=list)
+    # Snapshots the builder creates after the VM's device extras
+    # (memory=False, quiesce=False). Empty means no snapshots; the lab
+    # deliberately spans 0, 1 and 2 snapshots per VM. Forbidden on
+    # templates (vSphere forbids snapshotting a template).
+    snapshots: list[SnapshotSpec] = field(default_factory=list)
     nics: list[NicSpec] = field(default_factory=list)
     cdrom: CdromSpec | None = None
     boot_order: list[str] = field(default_factory=lambda: ["disk"])
@@ -820,6 +846,30 @@ def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
             f"{where}: template VMs cannot take power_state {power_state!r} "
             "(templates always stay poweredOff)"
         )
+
+    # Snapshots: each entry names one snapshot (optional description).
+    # vSphere forbids snapshotting a template, so a template with
+    # snapshots is a load error, not a build-time failure.
+    snapshots = []
+    seen_snapshots = set()
+    for i, snap in enumerate(raw.get("snapshots") or []):
+        swhere = f"{where} snapshot {i}"
+        if not isinstance(snap, dict):
+            raise ConfigError(f"{swhere}: each snapshot must be a mapping with a name")
+        sname = snap.get("name")
+        if not isinstance(sname, str) or not sname:
+            raise ConfigError(f"{swhere}: name must be a non-empty string")
+        if sname in seen_snapshots:
+            raise ConfigError(f"{where}: duplicate snapshot name {sname!r}")
+        seen_snapshots.add(sname)
+        snapshots.append(
+            SnapshotSpec(name=sname, description=str(snap.get("description", "")))
+        )
+    if template and snapshots:
+        raise ConfigError(
+            f"{where}: template VMs cannot have snapshots "
+            "(vSphere forbids snapshotting a template)"
+        )
     fast_boot = raw.get("fast_boot", RANDOM)
     if fast_boot is not True and fast_boot is not False and fast_boot != RANDOM:
         raise ConfigError(f"{where}: fast_boot must be true, false or 'random'")
@@ -868,6 +918,7 @@ def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
         memory_hot_add=bool(raw.get("memory_hot_add", False)),
         disks=disks,
         volumes=volumes,
+        snapshots=snapshots,
         nics=nics,
         cdrom=cdrom,
         boot_order=list(boot_order),
@@ -980,8 +1031,9 @@ def load_declared_assignments(path: str | Path = "environments/default/vms.yaml"
 
     Each entry carries the seed-resolved attributes (cbt, power_state,
     fast_boot, tools_status, boot_delay_ms) plus the declared disk
-    layout (basic/dynamic types and volumes). Shared by the query tool
-    and the inventory API so both show the same declared-vs-live view.
+    layout (basic/dynamic types and volumes) and the declared snapshot
+    names. Shared by the query tool and the inventory API so both show
+    the same declared-vs-live view.
     """
     try:
         lab = load_lab(path)
@@ -992,6 +1044,7 @@ def load_declared_assignments(path: str | Path = "environments/default/vms.yaml"
     for vm in lab.vms:
         entry = assigned[vm.name].to_dict()
         entry["disk_layout"] = disk_layout_summary(vm)
+        entry["snapshots"] = [s.name for s in vm.snapshots]
         declared[vm.name] = entry
     return declared
 
