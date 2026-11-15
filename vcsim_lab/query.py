@@ -24,6 +24,7 @@ from .config import DISK_LAYOUT_EXTRA_CONFIG_KEY
 from .vcenter import (
     connect,
     disconnect,
+    folder_rel_path,
     list_objs,
     retrieve_props,
     retrieve_props_multi,
@@ -218,11 +219,11 @@ def summarize_vm(
 
     ``runtime`` carries leaf properties fetched by ``summarize_lab``
     (power state, host name, CBT flag, boot delay, tools status,
-    snapshots) — ``vm.runtime`` / ``vm.summary`` / ``vm.snapshot`` as
-    whole objects cannot be deserialized against vcsim (see
-    ``vcenter.retrieve_props``), so they are never touched here except
-    for a best-effort snapshot fallback when no leaf data was passed.
-    ``declared`` is the VM's resolved assignment (from
+    snapshots, folder path) — ``vm.runtime`` / ``vm.summary`` /
+    ``vm.snapshot`` as whole objects cannot be deserialized against
+    vcsim (see ``vcenter.retrieve_props``), so they are never touched
+    here except for a best-effort snapshot fallback when no leaf data
+    was passed. ``declared`` is the VM's resolved assignment (from
     ``config.resolve_random_assignments``), used to show
     declared-vs-live values — notably for tools status, which vcsim
     never reports (see README).
@@ -306,6 +307,11 @@ def summarize_vm(
     summary = {
         "name": vm.name,
         "path": config.files.vmPathName,
+        # Folder path relative to the datacenter vm folder
+        # ("lab/Prod/Web"; "" directly under it), walked live from the
+        # VM's parent chain by summarize_lab. None when the chain could
+        # not be read (unknown) or when no leaf data was passed.
+        "folder": runtime.get("folder"),
         "power": runtime.get("power"),
         "host": runtime.get("host"),
         "template": devices.is_template(vm),
@@ -356,6 +362,8 @@ def summarize_vm(
             summary["snapshot_mismatch"] = [s["name"] for s in snapshots] != declared[
                 "snapshots"
             ]
+        if "folder" in declared and summary["folder"] is not None:
+            summary["folder_mismatch"] = summary["folder"] != declared["folder"]
     return summary
 
 
@@ -377,8 +385,8 @@ def summarize_lab(si, names: list[str] | None = None, declared: dict | None = No
     """
     vms = iter_vms(si)
     # One batched leaf retrieve for every VM's power state, host, CBT
-    # flag, boot delay and tools status, plus a host moId -> name map
-    # (host names come from the inventory list).
+    # flag, boot delay, tools status and parent folder, plus a host
+    # moId -> name map (host names come from the inventory list).
     leaf = retrieve_props_multi(
         si,
         vms,
@@ -390,12 +398,16 @@ def summarize_lab(si, names: list[str] | None = None, declared: dict | None = No
             "config.bootOptions.bootDelay",
             "guest.toolsStatus",
             "guest.toolsRunningStatus",
+            "parent",
         ],
     )
     host_names = {h._moId: h.name for h in list_objs(si.RetrieveContent(), vim.HostSystem)}
     # Snapshot state is a separate best-effort retrieve so a failure
     # there never breaks the main summary (see _retrieve_snapshot_props).
     snapshot_props = _retrieve_snapshot_props(si, vms)
+    # One shared folder-path cache for all VMs: folders are shared, so
+    # each parent chain is walked once (see vcenter.folder_rel_path).
+    folder_cache: dict = {}
     summaries = []
     for vm in vms:
         # A VM missing from the leaf result is a stale ContainerView
@@ -406,6 +418,8 @@ def summarize_lab(si, names: list[str] | None = None, declared: dict | None = No
         props = leaf.get(vm._moId, {})
         host = props.get("runtime.host")
         snap = snapshot_props.get(vm._moId, {"snapshots": None, "current_snapshot": None})
+        parent = props.get("parent")
+        folder = folder_rel_path(parent, folder_cache) if parent is not None else None
         summaries.append(
             summarize_vm(
                 vm,
@@ -418,6 +432,7 @@ def summarize_lab(si, names: list[str] | None = None, declared: dict | None = No
                     "tools_running_status": props.get("guest.toolsRunningStatus"),
                     "snapshots": snap["snapshots"],
                     "current_snapshot": snap["current_snapshot"],
+                    "folder": folder,
                 },
                 declared=(declared or {}).get(vm.name),
             )
@@ -599,6 +614,12 @@ def print_table(summaries: list[dict]) -> None:
         nics = ", ".join(f"{n['type'].replace('Virtual', '')}@{n['network']}" for n in s["nics"])
         tag = " [template]" if s.get("template") else ""
         print(f"{s['name']}{tag} [{s['power']}] {s['guest_id']} {s['cpus']}vCPU {s['memory_mb']}MB {s['firmware']}")
+        folder = s.get("folder")
+        if folder is not None:
+            folder_line = f"  folder: {folder or '(vm folder root)'}"
+            if s.get("folder_mismatch"):
+                folder_line += f" [declared {s['declared']['folder']!r}]"
+            print(folder_line)
         if s.get("vapp") and s["vapp"].get("product"):
             p = s["vapp"]["product"]
             props = ", ".join(f"{x['id']}={x['value']}" for x in s["vapp"]["properties"])

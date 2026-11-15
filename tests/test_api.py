@@ -34,9 +34,9 @@ from vcsim_lab.config import VCenterConfig  # noqa: E402
 from vcsim_lab.vcenter import VCenterError  # noqa: E402
 
 _CANNED_VMS = [
-    {"name": "win11-secure", "template": False, "host": "DC0_H0", "power": "poweredOn"},
-    {"name": "win2022-template", "template": True, "host": "DC0_H0", "power": "poweredOff"},
-    {"name": "ubuntu-k8s-node", "template": False, "host": "DC0_C0_H0", "power": "suspended"},
+    {"name": "win11-secure", "template": False, "host": "DC0_H0", "power": "poweredOn", "folder": "lab/Prod"},
+    {"name": "win2022-template", "template": True, "host": "DC0_H0", "power": "poweredOff", "folder": "lab/Templates"},
+    {"name": "ubuntu-k8s-node", "template": False, "host": "DC0_C0_H0", "power": "suspended", "folder": "lab/Prod"},
 ]
 
 _CANNED_VMS_DEV = [
@@ -250,6 +250,18 @@ def test_vms_returns_summaries(monkeypatch):
     assert resp.headers["X-Environment"] == "default"
     names = [vm["name"] for vm in resp.json()]
     assert names == ["win11-secure", "win2022-template", "ubuntu-k8s-node"]
+
+
+def test_vms_include_folder_paths(monkeypatch):
+    monkeypatch.setattr(api.query, "summarize_lab", _fake_summarize)
+    client = _make_client(monkeypatch)
+    folders = {vm["name"]: vm["folder"] for vm in client.get("/api/vms").json()}
+    assert folders == {
+        "win11-secure": "lab/Prod",
+        "win2022-template": "lab/Templates",
+        "ubuntu-k8s-node": "lab/Prod",
+    }
+    assert client.get("/api/vms/win2022-template").json()["folder"] == "lab/Templates"
 
 
 def test_vms_template_filter(monkeypatch):

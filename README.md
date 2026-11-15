@@ -109,9 +109,10 @@ tests/test_firmware_disks.py 33 offline tests (firmware mix, basic/dynamic disks
 tests/test_config.py     4 offline tests (config loading)
 tests/test_vcenter.py    2 offline tests (network lookup)
 tests/test_environments.py 19 offline tests (environment discovery, validation, env_info)
-tests/test_api.py        37 offline tests (API routes, filters, errors, environment switching, proxy forwarding)
+tests/test_api.py        38 offline tests (API routes, filters, errors, environment switching, proxy forwarding)
 tests/test_snapshots.py  31 offline tests (snapshots, Solaris guest ID, toolsOk spread, verify)
-                         run all: pytest tests/ -q (219 tests, no vCenter needed)
+tests/test_folders.py    41 offline tests (folder paths, nested hierarchy, recursive creation, verify)
+                         run all: pytest tests/ -q (261 tests, no vCenter needed)
 ```
 
 ## The lab
@@ -119,12 +120,12 @@ tests/test_snapshots.py  31 offline tests (snapshots, Solaris guest ID, toolsOk 
 The `default` environment: one datacenter (`DC0`), one cluster
 (`DC0_C0`, 3 hosts) + 1 standalone host, 3 datastores (`LocalDS_0/1/2`),
 networks `VM Network` (standard), `DC0_DVPG0` / `DC0_DVPG1` (distributed
-portgroups), `DC0_NSX0` (NSX opaque). Folders `lab-windows`, `lab-linux`,
-`lab-gpu`, `lab-templates`, `lab-appliances`; resource pools
-`lab-general`, `lab-gpu`; vApp `lab-appliances` (a ResourcePool subtype,
-created with `ResourcePool.CreateVApp`). The `dev` environment is a
-smaller shape (2 cluster hosts + 1 standalone host, 2 datastores) with
-3 VMs — see "Multiple environments".
+portgroups), `DC0_NSX0` (NSX opaque). VMs live in a nested folder
+hierarchy under the datacenter vm folder (see "Nested folders" below);
+resource pools `lab-general`, `lab-gpu`; vApp `lab-appliances` (a
+ResourcePool subtype, created with `ResourcePool.CreateVApp`). The
+`dev` environment is a smaller shape (2 cluster hosts + 1 standalone
+host, 2 datastores) with 3 VMs — see "Multiple environments".
 
 | VM | OS | vCPU / RAM | Firmware | Storage | Network | Special |
 |---|---|---|---|---|---|---|
@@ -191,7 +192,7 @@ needed.
 
 ### Appliances
 
-Two VMs act as virtual appliances and live in the `lab-appliances`
+Two VMs act as virtual appliances and live in the `lab/Appliances`
 folder inside the `lab-appliances` vApp (declared in `lab.vapps`, named
 per VM with `vapp_container:`):
 
@@ -296,6 +297,44 @@ vcsim gap: the snapshot tree's `state` field always reads back
 `poweredOff`, regardless of the VM's power state when the snapshot was
 taken — so the lab reports it but never verifies against it (see
 below).
+
+### Nested folders
+
+VMs live in a nested folder hierarchy under the datacenter vm folder —
+three levels deep, with VMs at every level (not only at the leaves), so
+folder-subtree matching has a real hierarchy to work against:
+
+```
+lab/                      freebsd13-nas
+├── Prod/                 win11-secure, win2019-fileserver, ubuntu-k8s-node
+│   ├── Web/              debian12-web, sles15-sap
+│   ├── DB/               win2022-sql, rhel9-db, solaris11-db
+│   └── VDI/              win10-vdi, win11-amd-mxgpu, ubuntu-vgpu-vdi
+├── Lab/
+│   ├── GPU/              ubuntu-gpu-llm, rhel9-ai-train,
+│                         ubuntu-nvidia-a100-pt, ubuntu-nvidia-h100-vgpu,
+│                         rhel9-amd-mi210-pt
+│   └── Legacy/           centos8-legacy
+├── Templates/            win2022-template, ubuntu-2404-template, rhel9-template
+└── Appliances/           opnsense-fw, truenas-storage
+```
+
+Each VM declares its folder as a path relative to the datacenter vm
+folder (`folder: lab/Prod/Web`; `""` for the vm folder itself). Paths
+are validated on load — no leading or trailing slash, no empty segment,
+no `.` or `..` — and the builder creates missing parents recursively
+(`Folder.CreateFolder`, idempotent: a re-run creates nothing). A VM's
+folder is ensured even when it is not listed in `lab.folders`, so a
+create never silently falls back to the vm folder root; `lab.folders`
+still lists every path, so teardown knows the whole tree. The query
+tool reports each VM's live folder path (walked from the VM's parent
+chain, the same way a migration tool would read it), the API serves it
+in the per-VM summaries, and `verify.py` checks the live path against
+the declared one as a core check. Teardown removes folders deepest
+first (`--remove-folders`), so a parent only comes down once its
+subfolders are gone. The appliance VMs show the two hierarchies are
+independent: they sit in the `lab/Appliances` folder *and* in the
+`lab-appliances` vApp resource pool.
 
 ### Randomized VM attributes
 

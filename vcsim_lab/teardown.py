@@ -63,7 +63,16 @@ def teardown_lab(
             log.append(f"{spec.name}: deleted")
         if remove_folders:
             dc = find_datacenter(si, lab.datacenter)
-            for name in lab.folders:
+            # Deepest first: a parent folder only becomes empty once
+            # its subfolders are gone, so deleting "lab/Prod/Web"
+            # before "lab/Prod" (and "lab" last) is what lets the
+            # whole tree come down. Folders not listed in
+            # lab.folders (e.g. a VM folder path the author forgot
+            # to list) are left in place.
+            ordered = sorted(
+                lab.folders, key=lambda p: (-len(p.split("/")), p)
+            )
+            for name in ordered:
                 folder = find_vm_folder(dc, name)
                 if folder is None:
                     continue

@@ -346,8 +346,8 @@ class TestLabMatrix(unittest.TestCase):
         self.assertEqual(len(appliances), 2)
         self.assertEqual({v.vapp_container for v in appliances}, {"lab-appliances"})
         self.assertEqual(lab.vapps, ["lab-appliances"])
-        self.assertIn("lab-templates", lab.folders)
-        self.assertIn("lab-appliances", lab.folders)
+        self.assertIn("lab/Templates", lab.folders)
+        self.assertIn("lab/Appliances", lab.folders)
 
 
 if __name__ == "__main__":

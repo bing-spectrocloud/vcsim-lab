@@ -180,11 +180,81 @@ def find_resource_pool(cluster: vim.ClusterComputeResource, name: str) -> vim.Re
     return None
 
 
-def find_vm_folder(dc: vim.Datacenter, name: str) -> vim.Folder:
-    for child in dc.vmFolder.childEntity:
+def find_child_folder(parent: vim.Folder, name: str) -> vim.Folder | None:
+    """A direct child folder of `parent` by name, or None."""
+    for child in parent.childEntity:
         if isinstance(child, vim.Folder) and child.name == name:
             return child
     return None
+
+
+def find_folder_path(dc: vim.Datacenter, path: str) -> vim.Folder | None:
+    """The folder at `path` relative to the datacenter vm folder
+    ("lab/Prod/Web"), or None when any segment is missing. "" is the vm
+    folder itself. Single-segment paths behave like the old flat
+    lookup, so existing callers keep working."""
+    folder = dc.vmFolder
+    if not path:
+        return folder
+    for segment in path.split("/"):
+        folder = find_child_folder(folder, segment)
+        if folder is None:
+            return None
+    return folder
+
+
+def find_vm_folder(dc: vim.Datacenter, name: str) -> vim.Folder:
+    """Find a VM folder by name or path under the datacenter vm folder."""
+    return find_folder_path(dc, name)
+
+
+def folder_rel_path(folder, cache: dict | None = None) -> str | None:
+    """A folder's path relative to the datacenter vm folder, e.g.
+    "lab/Prod/Web" ("": the vm folder itself), by walking the parent
+    chain. The vm folder's parent is the Datacenter, which is the stop
+    condition — its own name ("vm") is not part of the path.
+
+    `cache` maps folder MoRef id -> resolved path (or None when the
+    chain could not be read); pass one shared cache when resolving many
+    VMs so shared parents are walked once. Returns None when any link
+    in the chain cannot be read (best effort — the caller reports
+    "unknown" rather than inventing a path).
+    """
+    if cache is None:
+        cache = {}
+    moid = getattr(folder, "_moId", None)
+    if moid is not None and moid in cache:
+        return cache[moid]
+    try:
+        parent = folder.parent
+    except Exception:  # noqa: BLE001 — unreadable chain means "unknown"
+        if moid is not None:
+            cache[moid] = None
+        return None
+    if isinstance(parent, vim.Datacenter):
+        # This folder IS the datacenter vm folder.
+        if moid is not None:
+            cache[moid] = ""
+        return ""
+    if not isinstance(parent, vim.Folder):
+        if moid is not None:
+            cache[moid] = None
+        return None
+    parent_path = folder_rel_path(parent, cache)
+    if parent_path is None:
+        if moid is not None:
+            cache[moid] = None
+        return None
+    try:
+        name = folder.name
+    except Exception:  # noqa: BLE001 — unreadable chain means "unknown"
+        if moid is not None:
+            cache[moid] = None
+        return None
+    path = f"{parent_path}/{name}" if parent_path else name
+    if moid is not None:
+        cache[moid] = path
+    return path
 
 
 def find_datastore(dc: vim.Datacenter, name: str) -> vim.Datastore:

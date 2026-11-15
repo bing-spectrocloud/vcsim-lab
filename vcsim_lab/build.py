@@ -29,6 +29,7 @@ from .vcenter import (
     VCenterError,
     connect,
     disconnect,
+    find_child_folder,
     find_cluster,
     find_datacenter,
     find_datastore,
@@ -95,12 +96,26 @@ class BuildReport:
 # ---------------------------------------------------------------------------
 
 
-def ensure_folder(dc: vim.Datacenter, name: str) -> vim.Folder:
-    existing = find_vm_folder(dc, name)
-    if existing is not None:
-        return existing
-    # CreateFolder is synchronous: it returns the new Folder, not a Task.
-    return dc.vmFolder.CreateFolder(name)
+def ensure_folder(dc: vim.Datacenter, path: str) -> vim.Folder:
+    """Create (or find) the folder at `path` relative to the datacenter
+    vm folder, creating missing parents recursively. "" is the vm
+    folder itself. Single-segment paths behave like the old flat
+    lookup. Idempotent: existing folders are reused, so a re-run over
+    a built lab creates nothing."""
+    folder = dc.vmFolder
+    if not path:
+        return folder
+    for segment in path.split("/"):
+        # Find the child under the current parent (not from the root:
+        # two branches may share a segment name, e.g. lab/Prod/Web and
+        # lab/Lab/Web).
+        child = find_child_folder(folder, segment)
+        if child is None:
+            # CreateFolder is synchronous: it returns the new Folder,
+            # not a Task.
+            child = folder.CreateFolder(segment)
+        folder = child
+    return folder
 
 
 def ensure_resource_pool(cluster: vim.ClusterComputeResource, name: str) -> vim.ResourcePool:
@@ -196,7 +211,15 @@ def resolve_refs(si, lab: LabConfig, dc, cluster) -> dict:
                 props.get("summary.opaqueNetworkType"),
             )
 
-    folders = {name: ensure_folder(dc, name) for name in lab.folders}
+    # Every folder path the lab needs: lab.folders plus any VM folder
+    # path not listed there (a VM's folder is ensured even if the
+    # author forgot to list it — the create must never silently fall
+    # back to the vm folder root). Order-preserving dedup keeps the
+    # refs dict keyed by path string.
+    folder_paths = list(
+        dict.fromkeys([*lab.folders, *(vm.folder for vm in lab.vms if vm.folder)])
+    )
+    folders = {path: ensure_folder(dc, path) for path in folder_paths}
     pools = {name: ensure_resource_pool(cluster, name) for name in lab.resource_pools}
     vapps = {name: ensure_vapp(cluster, name) for name in lab.vapps}
     hosts = list(cluster.host)

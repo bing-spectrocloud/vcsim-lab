@@ -463,3 +463,58 @@ One vcsim gap found and documented: the snapshot tree's `state` field
 always reads back `poweredOff` regardless of the VM's power state at
 capture time, so it is reported but never verified. 219 tests (31 new
 in `tests/test_snapshots.py`).
+
+## 19. 2026-11-14 19:13 — Nested folders for the lab's VMs
+
+> in vCenter, created nested VMs and put VMs in them
+
+Clarified in chat (19:14): "nested folders" — not nested resource
+pools or nested ESXi. The motivation is preflight: its `--folder`
+flag matches by subtree, and the lab's folders were flat, so every VM
+reported the same path.
+
+Outcome: the default environment's five flat folders (`lab-windows`,
+`lab-linux`, `lab-gpu`, `lab-templates`, `lab-appliances`) became a
+nested hierarchy under the datacenter vm folder, three levels deep,
+with VMs at every level (dev unchanged):
+
+```
+lab/                      freebsd13-nas
+├── Prod/                 win11-secure, win2019-fileserver, ubuntu-k8s-node
+│   ├── Web/              debian12-web, sles15-sap
+│   ├── DB/               win2022-sql, rhel9-db, solaris11-db
+│   └── VDI/              win10-vdi, win11-amd-mxgpu, ubuntu-vgpu-vdi
+├── Lab/
+│   ├── GPU/              ubuntu-gpu-llm, rhel9-ai-train,
+│                         ubuntu-nvidia-a100-pt, ubuntu-nvidia-h100-vgpu,
+│                         rhel9-amd-mi210-pt
+│   └── Legacy/           centos8-legacy
+├── Templates/            win2022-template, ubuntu-2404-template, rhel9-template
+└── Appliances/           opnsense-fw, truenas-storage
+```
+
+Each VM declares `folder:` as a path relative to the datacenter vm
+folder (`""` for the vm folder itself); `config.validate_folder_path`
+rejects leading/trailing slashes, empty segments and `.`/`..`, and
+`load_lab` rejects duplicate `lab.folders` entries. The builder
+creates missing parents recursively (`Folder.CreateFolder`, idempotent
+— a re-run creates nothing) and ensures every VM's folder path even
+when it is not listed in `lab.folders`, so a create never silently
+falls back to the vm folder root. The query tool reports each VM's
+live folder path, walked from the VM's parent chain via a batched
+`parent` leaf retrieve plus a shared per-folder cache
+(`vcenter.folder_rel_path`; None when the chain cannot be read); the
+API serves it in the per-VM summaries; `verify.py` checks the live
+path against the declared one as a core check (skipped when unknown).
+Teardown removes folders deepest first (`--remove-folders`), so the
+whole tree comes down. The appliance VMs show the two hierarchies are
+independent: they sit in the `lab/Appliances` folder *and* in the
+`lab-appliances` vApp resource pool. Live-validated against vcsim
+v0.56.2: full build 23 VMs / 91 steps / 0 failed, verify 0 failures
+(5 Secure Boot + 19 tools-status warnings), live folder distribution
+matches declared exactly, the `lab/Prod` subtree holds 11 VMs (3
+direct + 8 in Web/DB/VDI), the raw tree walk shows real nested Folder
+objects, the API serves `folder` per VM, a re-run leaves the folder
+count at 10, and teardown `--remove-folders` deletes all 10 folders
+with the vm folder left empty. 261 tests (41 new in
+`tests/test_folders.py`, 1 new API folder test).

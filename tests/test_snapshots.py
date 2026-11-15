@@ -120,7 +120,7 @@ class TestLabMatrix(unittest.TestCase):
         self.assertFalse(vm.secure_boot)
         self.assertEqual(vm.cpus, 2)
         self.assertEqual(vm.memory_mb, 4096)
-        self.assertEqual(vm.folder, "lab-linux")
+        self.assertEqual(vm.folder, "lab/Prod/DB")
         self.assertEqual([n.network for n in vm.nics], ["vm-network"])
         self.assertEqual(len(vm.disks), 2)
         self.assertEqual(vm.tools_status, "toolsOk")

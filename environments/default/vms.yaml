@@ -53,6 +53,11 @@
 #   VM; templates cannot have snapshots (vSphere forbids it), and
 #   snapshots are only created for freshly built VMs (a re-run over
 #   an existing VM skips them, like the create step).
+# - `folder:` is a path relative to the datacenter vm folder
+#   ("lab/Prod/Web"; "" for the vm folder itself). No leading or
+#   trailing slash, no "." or ".." segments. Parents are created
+#   recursively at build time; the builder, query tool and verifier
+#   all report the full path, and the API serves it per VM.
 # - `vapp_config:` sets OVF product info + environment properties on an
 #   appliance VM (vAppConfig, served back intact by vcsim). `vapp_container:`
 #   places the VM inside one of the vApp containers in `lab.vapps`.
@@ -74,13 +79,22 @@ lab:
   # Seed for the per-VM random attributes (cbt, power_state,
   # fast_boot, tools_status). Same seed -> same assignment.
   random_seed: 42
-  # VM folders created under the datacenter's vm folder.
+  # VM folders created under the datacenter's vm folder. Paths are
+  # nested (up to 3 levels deep) so folder-subtree matching has a real
+  # hierarchy to work against; parents are created recursively, and
+  # VMs live at every level — directly under `lab` and `lab/Prod` as
+  # well as in the leaf folders. See README "Nested folders".
   folders:
-    - lab-windows
-    - lab-linux
-    - lab-gpu
-    - lab-templates
-    - lab-appliances
+    - lab
+    - lab/Prod
+    - lab/Prod/Web
+    - lab/Prod/DB
+    - lab/Prod/VDI
+    - lab/Lab
+    - lab/Lab/GPU
+    - lab/Lab/Legacy
+    - lab/Templates
+    - lab/Appliances
   # Resource pools created under the cluster's root resource pool.
   resource_pools:
     - lab-general
@@ -124,7 +138,7 @@ vms:
     firmware: efi
     secure_boot: true
     tpm: true
-    folder: lab-windows
+    folder: lab/Prod
     resource_pool: lab-general
     power_state: random
     cbt: random
@@ -156,7 +170,7 @@ vms:
     firmware: efi
     secure_boot: false
     tpm: true
-    folder: lab-windows
+    folder: lab/Prod/DB
     resource_pool: lab-general
     power_state: random
     cbt: true
@@ -190,7 +204,7 @@ vms:
     tpm: true
     video_3d: true
     video_ram_kb: 131072
-    folder: lab-windows
+    folder: lab/Prod/VDI
     resource_pool: lab-general
     power_state: random
     cbt: random
@@ -220,7 +234,7 @@ vms:
     firmware: bios
     secure_boot: false
     tpm: false
-    folder: lab-windows
+    folder: lab/Prod
     resource_pool: lab-general
     power_state: random
     cbt: random
@@ -257,7 +271,7 @@ vms:
       device_id: "0x1eb8"   # Tesla T4 (used for the dynamic fallback)
       label: "Tesla T4"
       mmio_size_gb: 32
-    folder: lab-gpu
+    folder: lab/Lab/GPU
     resource_pool: lab-gpu
     power_state: random
     cbt: random
@@ -290,7 +304,7 @@ vms:
       model: A100
       profile: nvidia_a100-40c
       label: "vGPU A100-40C"
-    folder: lab-gpu
+    folder: lab/Prod/VDI
     resource_pool: lab-gpu
     power_state: random
     cbt: random
@@ -322,7 +336,7 @@ vms:
       device_id: "0x20b0"   # A100 PCIe
       label: "A100 PCIe"
       mmio_size_gb: 128
-    folder: lab-gpu
+    folder: lab/Lab/GPU
     resource_pool: lab-gpu
     power_state: random
     cbt: random
@@ -349,7 +363,7 @@ vms:
     firmware: bios
     secure_boot: false
     tpm: false
-    folder: lab-linux
+    folder: lab/Prod/Web
     resource_pool: lab-general
     power_state: poweredOn
     cbt: random
@@ -375,7 +389,7 @@ vms:
     firmware: bios
     secure_boot: false
     tpm: false
-    folder: lab-linux
+    folder: lab/Prod/DB
     resource_pool: lab-general
     power_state: random
     cbt: true
@@ -404,7 +418,7 @@ vms:
     firmware: efi
     secure_boot: true
     tpm: true
-    folder: lab-linux
+    folder: lab/Prod/Web
     resource_pool: lab-general
     power_state: random
     cbt: random
@@ -431,7 +445,7 @@ vms:
     firmware: bios
     secure_boot: false
     tpm: false
-    folder: lab-linux
+    folder: lab
     resource_pool: lab-general
     power_state: random
     cbt: random
@@ -457,7 +471,7 @@ vms:
     firmware: bios
     secure_boot: false
     tpm: false
-    folder: lab-linux
+    folder: lab/Prod/DB
     resource_pool: lab-general
     power_state: poweredOn
     cbt: true
@@ -484,7 +498,7 @@ vms:
     firmware: bios
     secure_boot: false
     tpm: false
-    folder: lab-linux
+    folder: lab/Lab/Legacy
     resource_pool: lab-general
     power_state: poweredOff
     cbt: random
@@ -509,7 +523,7 @@ vms:
     firmware: bios
     secure_boot: false
     tpm: false
-    folder: lab-linux
+    folder: lab/Prod
     resource_pool: lab-general
     power_state: random
     cbt: random
@@ -549,7 +563,7 @@ vms:
       device_id: "0x20b0"   # A100 PCIe 80GB
       label: "NVIDIA A100 80GB"
       mmio_size_gb: 80
-    folder: lab-gpu
+    folder: lab/Lab/GPU
     resource_pool: lab-gpu
     power_state: random
     cbt: random
@@ -579,7 +593,7 @@ vms:
       model: H100
       profile: nvidia_h100-80c
       label: "vGPU H100-80C"
-    folder: lab-gpu
+    folder: lab/Lab/GPU
     resource_pool: lab-gpu
     power_state: random
     cbt: random
@@ -611,7 +625,7 @@ vms:
       device_id: "0x0c34"   # Instinct MI210
       label: "AMD Instinct MI210"
       mmio_size_gb: 64
-    folder: lab-gpu
+    folder: lab/Lab/GPU
     resource_pool: lab-gpu
     power_state: random
     cbt: random
@@ -649,7 +663,7 @@ vms:
       device_id: "0x0c34"   # Instinct MI210
       label: "AMD MxGPU (MI210 VF)"
       mmio_size_gb: 64
-    folder: lab-gpu
+    folder: lab/Prod/VDI
     resource_pool: lab-gpu
     power_state: random
     cbt: random
@@ -675,7 +689,7 @@ vms:
     firmware: efi
     secure_boot: false
     tpm: false
-    folder: lab-templates
+    folder: lab/Templates
     resource_pool: lab-general
     template: true
     cbt: random
@@ -699,7 +713,7 @@ vms:
     firmware: bios
     secure_boot: false
     tpm: false
-    folder: lab-templates
+    folder: lab/Templates
     resource_pool: lab-general
     template: true
     cbt: random
@@ -723,7 +737,7 @@ vms:
     firmware: bios
     secure_boot: false
     tpm: false
-    folder: lab-templates
+    folder: lab/Templates
     resource_pool: lab-general
     template: true
     cbt: random
@@ -748,7 +762,7 @@ vms:
     firmware: bios
     secure_boot: false
     tpm: false
-    folder: lab-appliances
+    folder: lab/Appliances
     vapp_container: lab-appliances
     power_state: poweredOn
     cbt: false
@@ -785,7 +799,7 @@ vms:
     firmware: bios
     secure_boot: false
     tpm: false
-    folder: lab-appliances
+    folder: lab/Appliances
     vapp_container: lab-appliances
     power_state: poweredOn
     cbt: true

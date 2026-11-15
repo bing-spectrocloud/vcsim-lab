@@ -25,6 +25,12 @@ back (names included), so the live snapshot names must match the
 declared list. When the live summary carries no snapshot state at all
 (None — the leaf retrieve failed), the check is skipped rather than
 failed, the same way CBT and boot delay skip on missing live values.
+
+The folder path is a core check too: vcsim creates nested folders and
+serves the parent chain back, so the live path (relative to the
+datacenter vm folder, "" for a VM directly under it) must match the
+declared `folder:` path. Skipped when the live summary has no folder
+value (None — the parent chain could not be read).
 """
 
 from __future__ import annotations
@@ -89,6 +95,11 @@ def verify_vm(
     _check("power", assigned.power_state, live["power"], failures, warnings)
     _check("boot_order", spec.boot_order, live["boot_order"], failures, warnings)
     _check("template", spec.template, live.get("template", False), failures, warnings)
+    # Folder path is core: vcsim creates nested folders and serves the
+    # parent chain back. Skipped when the live summary has no folder
+    # value (None — the chain could not be read, not "root").
+    if live.get("folder") is not None:
+        _check("folder", spec.folder, live["folder"], failures, warnings)
     # CBT and boot delay are core: vcsim serves both reliably. Checks
     # skip when the live dict has no value (offline test fixtures).
     if live.get("cbt") is not None:

@@ -235,6 +235,9 @@ class VmSpec:
     video_3d: bool = False
     video_ram_kb: int = 16384
     gpu: GpuSpec | None = None
+    # Folder path relative to the datacenter vm folder, e.g.
+    # "lab/Prod/Web" ("": the vm folder itself). Parents are created
+    # recursively at build time; validated by validate_folder_path.
     folder: str = ""
     resource_pool: str = ""
     # vApp container (from lab.vapps) the VM is created in instead of a
@@ -320,6 +323,12 @@ class ResolvedAssignment:
 class LabConfig:
     datacenter: str
     cluster: str
+    # Folder paths to create under the datacenter vm folder, e.g.
+    # "lab/Prod/Web". Intermediate parents are created as needed, so a
+    # list entry's parents need not be listed — but entries that hold
+    # VMs directly (e.g. "lab/Prod") must be listed so teardown knows
+    # about them. VM folder paths not listed here are still created at
+    # build time (see build.resolve_refs).
     folders: list[str] = field(default_factory=list)
     resource_pools: list[str] = field(default_factory=list)
     # vApp containers created under the cluster's root resource pool
@@ -622,6 +631,35 @@ def _require(mapping: dict, key: str, where: str):
     return mapping[key]
 
 
+def validate_folder_path(path: str, where: str) -> str:
+    """Validate a VM folder path, relative to the datacenter vm folder.
+
+    "" means the vm folder itself (a VM directly under it). Otherwise
+    the path is slash-separated segments ("lab/Prod/Web"), each a real
+    folder name: no leading or trailing slash, no empty segment, and no
+    "." or ".." segment (nothing may escape the vm folder). Returns the
+    path unchanged so call sites can use it inline.
+    """
+    if not isinstance(path, str):
+        raise ConfigError(f"{where}: folder path must be a string, got {path!r}")
+    if path == "":
+        return path
+    if path.startswith("/") or path.endswith("/"):
+        raise ConfigError(
+            f"{where}: folder path {path!r} must not start or end with '/' "
+            "(paths are relative to the datacenter vm folder)"
+        )
+    for segment in path.split("/"):
+        if segment == "":
+            raise ConfigError(f"{where}: folder path {path!r} has an empty segment")
+        if segment in (".", ".."):
+            raise ConfigError(
+                f"{where}: folder path {path!r} must not contain {segment!r} "
+                "(paths cannot escape the datacenter vm folder)"
+            )
+    return path
+
+
 def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
     where = f"VM {raw.get('name', '?')!r}"
     name = _require(raw, "name", where)
@@ -888,6 +926,7 @@ def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
     hw = raw.get("hardware_version", "vmx-20")
     if not _HW_VERSION_RE.match(hw):
         raise ConfigError(f"{where}: hardware_version {hw!r} should look like 'vmx-20'")
+    folder = validate_folder_path(raw.get("folder", ""), where)
 
     return VmSpec(
         name=name,
@@ -904,7 +943,7 @@ def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
         video_3d=bool(raw.get("video_3d", False)),
         video_ram_kb=int(raw.get("video_ram_kb", 16384)),
         gpu=gpu,
-        folder=raw.get("folder", ""),
+        folder=folder,
         resource_pool=raw.get("resource_pool", ""),
         vapp_container=raw.get("vapp_container", ""),
         vapp=vapp,
@@ -967,11 +1006,19 @@ def load_lab(path: str | Path = "environments/default/vms.yaml") -> LabConfig:
     seed = lab.get("random_seed", DEFAULT_RANDOM_SEED)
     if not isinstance(seed, int) or isinstance(seed, bool):
         raise ConfigError(f"lab.random_seed must be an integer, got {seed!r}")
+    folders = [
+        validate_folder_path(f, "lab.folders:") for f in (lab.get("folders") or [])
+    ]
+    if len(folders) != len(set(folders)):
+        raise ConfigError(
+            f"duplicate folder paths in lab.folders: "
+            f"{sorted({f for f in folders if folders.count(f) > 1})}"
+        )
 
     return LabConfig(
         datacenter=_require(lab, "datacenter", "lab:"),
         cluster=_require(lab, "cluster", "lab:"),
-        folders=list(lab.get("folders") or []),
+        folders=folders,
         resource_pools=list(lab.get("resource_pools") or []),
         vapps=list(lab.get("vapps") or []),
         random_seed=seed,
@@ -1031,9 +1078,9 @@ def load_declared_assignments(path: str | Path = "environments/default/vms.yaml"
 
     Each entry carries the seed-resolved attributes (cbt, power_state,
     fast_boot, tools_status, boot_delay_ms) plus the declared disk
-    layout (basic/dynamic types and volumes) and the declared snapshot
-    names. Shared by the query tool and the inventory API so both show
-    the same declared-vs-live view.
+    layout (basic/dynamic types and volumes), the declared snapshot
+    names and the declared folder path. Shared by the query tool and
+    the inventory API so both show the same declared-vs-live view.
     """
     try:
         lab = load_lab(path)
@@ -1045,6 +1092,7 @@ def load_declared_assignments(path: str | Path = "environments/default/vms.yaml"
         entry = assigned[vm.name].to_dict()
         entry["disk_layout"] = disk_layout_summary(vm)
         entry["snapshots"] = [s.name for s in vm.snapshots]
+        entry["folder"] = vm.folder
         declared[vm.name] = entry
     return declared
 
