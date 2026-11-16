@@ -332,7 +332,7 @@ class TestVerifyTemplateVApp(unittest.TestCase):
 class TestLabMatrix(unittest.TestCase):
     def test_lab_has_gpu_vendors_templates_appliances(self):
         lab = config.load_lab(LAB)
-        self.assertEqual(len(lab.vms), 30)
+        self.assertEqual(len(lab.vms), 31)
         vendors = {v.gpu.vendor for v in lab.vms if v.gpu}
         self.assertEqual(vendors, {"nvidia", "amd"})
         models = {(v.gpu.vendor, v.gpu.model) for v in lab.vms if v.gpu}

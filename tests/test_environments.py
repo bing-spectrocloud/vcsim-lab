@@ -150,7 +150,7 @@ def test_real_environments_load():
     assert dev.vcsim["hosts"] == 2
     assert dev.vcsim["datastores"] == 2
     # Both labs parse and keep their expected sizes.
-    assert len(config.load_lab(default.lab_path).vms) == 30
+    assert len(config.load_lab(default.lab_path).vms) == 31
     assert len(config.load_lab(dev.lab_path).vms) == 3
     assert [vm.name for vm in config.load_lab(dev.lab_path).vms] == [
         "dev-win10", "dev-ubuntu", "dev-ubuntu-template",

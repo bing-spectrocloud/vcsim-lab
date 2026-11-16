@@ -2,7 +2,7 @@
 
 Build varied vCenter inventories in [vcsim](https://github.com/vmware/govmomi)
 (the govmomi vSphere simulator) with plain Python + pyVmomi — the
-`default` environment has 23 VMs spanning Windows, Linux, BSD and
+`default` environment has 31 VMs spanning Windows, Linux, BSD and
 Solaris, BIOS and EFI, NVMe/PVSCSI/LSI storage, standard / distributed /
 NSX networks, TPM, Secure Boot, 3D video, NVIDIA and AMD GPUs
 (passthrough, dynamic and vGPU), three VM templates, two virtual
@@ -17,11 +17,11 @@ per directory under `environments/`, each with its own vcsim process,
 lab and storage model — the endpoints stay the same, and you switch
 which environment they serve.
 
-Validated end to end against govmomi **v0.56.2** on 2026-11-14:
-full build 23 VMs / 91 steps / 0 failed, verify 0 failures
-(5 Secure Boot warnings + 19 tools-status warnings — both vcsim
+Validated end to end against govmomi **v0.56.2** on 2026-11-16:
+full build 31 VMs / 111 steps / 0 failed, verify 0 failures
+(5 Secure Boot warnings + 27 tools-status warnings — both vcsim
 limitations, see below), and a save/load round-trip that restores
-all 23 VMs including all 16 snapshots.
+all 31 VMs including all 16 snapshots.
 
 ## Quickstart
 
@@ -59,9 +59,9 @@ for several) or `docker compose down`.
 
 ```
 environments/            one vCenter simulation per directory
-  default/               the full lab (23 VMs, port 8989)
+  default/               the full lab (31 VMs, port 8989)
     env.yaml             name, description, vcsim port, inventory flags
-    vms.yaml             the lab: 23 VMs, folders, pools, vApps, networks (single source of truth)
+    vms.yaml             the lab: 31 VMs, folders, pools, vApps, networks (single source of truth)
     storage.yaml         host storage model: arrays, LUNs, fabric HBAs, LUN -> datastore
   dev/                   small 3-VM environment (port 8990) — template for new environments
     env.yaml / vms.yaml / storage.yaml

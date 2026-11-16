@@ -109,7 +109,7 @@ class TestSolarisGuestId(unittest.TestCase):
 
 class TestLabMatrix(unittest.TestCase):
     def test_lab_has_30_vms(self):
-        self.assertEqual(len(config.load_lab(LAB).vms), 30)
+        self.assertEqual(len(config.load_lab(LAB).vms), 31)
 
     def test_solaris_vm(self):
         vm = config.load_lab(LAB).vm("solaris11-db")
@@ -131,7 +131,7 @@ class TestLabMatrix(unittest.TestCase):
         counts = {}
         for vm in lab.vms:
             counts[len(vm.snapshots)] = counts.get(len(vm.snapshots), 0) + 1
-        self.assertEqual(counts, {0: 19, 1: 6, 2: 5})
+        self.assertEqual(counts, {0: 20, 1: 6, 2: 5})
         self.assertEqual(sum(len(v.snapshots) for v in lab.vms), 16)
 
     def test_no_template_has_snapshots(self):

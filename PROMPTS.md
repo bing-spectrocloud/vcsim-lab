@@ -658,3 +658,47 @@ passed. Live-verified: full build 30 VMs / 109 steps / 0 failed,
 verify 0 failures; preflight cold assess confirms all five checks
 fire (7 warn findings across the four VMs), counts now 0/12/15
 over 27 assessed VMs.
+
+## 23. Clean-room VM (2026-11-16)
+
+Prompt: "in vcsim-lab, can you create a VM that has no block, warning
+at all, so when I use --ignore-host-transport, i expect this VM to
+pass"
+
+New VM `clean-rhel9` (own "Clean-room" section at the end of
+environments/default/vms.yaml): RHEL 9, BIOS, 2 vCPU / 4 GB, one
+40 GB thin persistent VMDK, one E1000 NIC on the standard
+`vm-network`, poweredOff, no CD-ROM, no snapshots, no TPM, no
+Secure Boot, no SR-IOV, no extra devices, no vApp, no hot-add, no
+nested virt, no 3D video, disk.EnableUUID false, cbt false.
+Guest `rhel9_64Guest` is in both preflight's KubeVirt list and the
+Cirrus list, so guest-os passes under either context.
+
+Honest limit, found by reading the checks before building: a
+zero-warning VM is impossible against vcsim. `tools-status` only
+passes on toolsOk, and vcsim reports toolsNotInstalled for every VM
+(Tools status is guest-reported with no setter API); `vm-arch` only
+passes on a recorded x86 arch, and vcsim serves no Tools data, so
+arch is always unrecorded (verified: all 30 lab VMs read
+toolsNotInstalled / arch null). Both warnings are vcsim artifacts —
+on a real vCenter with Tools running, this VM passes clean. The VM
+declares toolsOk (sixth VM to do so; header comment updated).
+
+One VM also cannot pass both contexts: cold wants poweredOff,
+warm wants a running VM with CBT on. clean-rhel9 is the cold
+control VM; a warm twin would need power_state poweredOn + cbt
+true.
+
+Live-verified (local vcsim, cold assess, --ignore-host-transport):
+28 pass, 1 info (vm-appliance), 1 skip (vddk-port-902), and only
+the two vcsim-artifact warnings (vm-arch, tools-status) — verdict
+warn on those two alone. Warm assess blocks only on cirrus-cbt and
+cirrus-power-state, as designed.
+
+Lab is now 31 VMs / 53 disks, 16 BIOS / 15 EFI, snapshots still
+16. Count pins updated in 7 test files, plus a new
+test_clean_room_vm_passes_every_vm_check pinning the VM's clean
+attributes. Suite 318 passed. README counts refreshed (were stale
+at 23 VMs). Full build 31 VMs / 111 steps / 0 failed, verify 0
+failures (5 Secure Boot + 27 tools-status warnings); saved model
+re-saved and restart round-trip verified (31 VMs restored).

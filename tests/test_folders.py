@@ -80,6 +80,7 @@ EXPECTED_VM_FOLDERS = {
     "rhel9-template": "lab/Templates",
     "opnsense-fw": "lab/Appliances",
     "truenas-storage": "lab/Appliances",
+    "clean-rhel9": "lab/Prod/Web",
 }
 
 
@@ -295,7 +296,7 @@ class TestLabFolderMatrix(unittest.TestCase):
             {
                 "lab": 1,
                 "lab/Prod": 3,
-                "lab/Prod/Web": 3,
+                "lab/Prod/Web": 4,
                 "lab/Prod/DB": 4,
                 "lab/Prod/VDI": 4,
                 "lab/Lab": 1,
@@ -331,6 +332,7 @@ class TestLabFolderMatrix(unittest.TestCase):
         self.assertEqual(
             under_prod,
             [
+                "clean-rhel9",
                 "debian12-web",
                 "photon-container",
                 "rhel9-db",

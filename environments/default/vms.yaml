@@ -42,9 +42,9 @@
 #                   toolsOld | random — the DECLARED VMware Tools status.
 #                   Tools status is guest-reported with no setter API
 #                   and vcsim always reports toolsNotInstalled, so this
-#                   is compared declared-vs-live, never enforced. Five
+#                   is compared declared-vs-live, never enforced. Six
 #                   VMs declare toolsOk explicitly (Windows, Debian,
-#                   Ubuntu, Solaris, FreeBSD) — the live value is still
+#                   Ubuntu, Solaris, FreeBSD, RHEL) — the live value is still
 #                   toolsNotInstalled for all of them.
 #     disk_enable_uuid: true | false | random — whether the guest OS
 #                   sees its disks' UUIDs (disk.EnableUUID extraConfig,
@@ -1027,3 +1027,37 @@ vms:
         - { id: hostname, label: "Hostname", type: string, value: truenas-storage }
         - { id: mgmt_ip, label: "Management IP address", type: ip, value: "10.0.0.10" }
         - { id: admin_password, label: "Admin password", type: password, value: changeme }
+
+  # ---- Clean-room ------------------------------------------------------
+  # clean-rhel9: the control VM — passes every VM-scope check under the
+  # cold context with --ignore-host-transport, except the two checks
+  # vcsim cannot satisfy: tools-status (vcsim always reports
+  # toolsNotInstalled — Tools status is guest-reported with no setter
+  # API) and vm-arch (vcsim serves no Tools data, so the arch is
+  # always unrecorded). Both warn on every vcsim VM; on a real
+  # vCenter with Tools running, this VM would pass clean. Use it to
+  # verify the pass path end to end.
+  - name: clean-rhel9
+    annotation: "Clean-room RHEL 9 VM: no blockers, no warnings except tools-status/vm-arch (vcsim reports no Tools data)"
+    guest_id: rhel9_64Guest
+    os_label: "Red Hat Enterprise Linux 9 (64-bit)"
+    cpus: 2
+    cores_per_socket: 1
+    memory_mb: 4096
+    hardware_version: vmx-19
+    firmware: bios
+    secure_boot: false
+    tpm: false
+    folder: lab/Prod/Web
+    resource_pool: lab-general
+    power_state: poweredOff
+    cbt: false
+    fast_boot: false
+    tools_status: toolsOk
+    disk_enable_uuid: false
+    disks:
+      - { size_gb: 40, controller: lsi-sas, datastore: LocalDS_2, thin: true }
+    nics:
+      - { network: vm-network, type: e1000 }
+    cdrom: null
+    boot_order: [disk]

@@ -536,11 +536,42 @@ class TestLabMatrix(unittest.TestCase):
             (v.name, n) for v in lab.vms for n in v.nics if n.sriov
         ]
         self.assertEqual([n for n, _ in sriov], ["opnsense-fw"])
-        # 52 disks (was 46 — the big HANA VM adds three 1 TB disks,
-        # the other three new VMs one disk each).
-        self.assertEqual(sum(len(v.disks) for v in lab.vms), 52)
+        # 53 disks (was 52 — the clean-room VM adds one 40 GB disk).
+        self.assertEqual(sum(len(v.disks) for v in lab.vms), 53)
 
     def test_dev_lab_loads_with_enable_uuid(self):
         lab = config.load_lab(DEV_LAB)
         by_name = {v.name: v for v in lab.vms}
         self.assertIs(by_name["dev-win10"].disk_enable_uuid, True)
+
+    def test_clean_room_vm_passes_every_vm_check(self):
+        # clean-rhel9 is the control VM: under the cold context with
+        # --ignore-host-transport it passes every VM-scope check except
+        # tools-status and vm-arch, which vcsim cannot satisfy (it
+        # reports no Tools data at all). A future edit must not
+        # silently give it a findings trigger.
+        lab = config.load_lab(LAB)
+        vm = {v.name: v for v in lab.vms}["clean-rhel9"]
+        self.assertEqual(vm.guest_id, "rhel9_64Guest")
+        self.assertEqual(vm.firmware, "bios")
+        self.assertFalse(vm.secure_boot)
+        self.assertFalse(vm.tpm)
+        self.assertEqual(vm.power_state, "poweredOff")
+        self.assertIs(vm.disk_enable_uuid, False)
+        self.assertFalse(vm.snapshots)
+        self.assertIsNone(vm.cdrom)
+        self.assertFalse(vm.extra_devices)
+        self.assertFalse(vm.cpu_hot_add)
+        self.assertFalse(vm.memory_hot_add)
+        self.assertFalse(vm.nested_virt)
+        self.assertFalse(vm.video_3d)
+        self.assertIsNone(vm.vapp)
+        self.assertEqual(vm.vapp_container, "")
+        self.assertEqual(len(vm.disks), 1)
+        disk = vm.disks[0]
+        self.assertEqual(disk.backing, "vmdk")
+        self.assertEqual(disk.disk_mode, "persistent")
+        self.assertFalse(disk.shared)
+        self.assertEqual(len(vm.nics), 1)
+        self.assertEqual(vm.nics[0].network, "vm-network")
+        self.assertFalse(vm.nics[0].sriov)
