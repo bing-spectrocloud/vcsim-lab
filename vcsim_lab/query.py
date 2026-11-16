@@ -347,6 +347,8 @@ def summarize_vm(
         "memory_mb": config.hardware.memoryMB,
         "cpu_hot_add": config.cpuHotAddEnabled,
         "memory_hot_add": config.memoryHotAddEnabled,
+        "nested_virt": bool(getattr(config, "nestedHVEnabled", False)),
+        "extra_devices": devices.extra_device_kinds(hw.device),
         "tpm": tpm,
         "gpus": [_gpu_info(g) for g in gpus],
         "video_3d": bool(video and video[0].enable3DSupport),

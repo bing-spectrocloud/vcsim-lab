@@ -211,6 +211,19 @@ def verify_vm(
         )
     _check("cdrom", spec.cdrom is not None, live["cdrom"], failures, warnings)
     _check("video_3d", spec.video_3d, live["video_3d"], failures, warnings)
+    # Nested virt and extra devices are core: vcsim serves both back
+    # reliably (verified live, entry 22). Skipped when the live summary
+    # has no value (older fixtures predate the fields).
+    if live.get("nested_virt") is not None:
+        _check("nested_virt", spec.nested_virt, live["nested_virt"], failures, warnings)
+    if live.get("extra_devices") is not None:
+        _check(
+            "extra_devices",
+            sorted(spec.extra_devices),
+            sorted(live["extra_devices"]),
+            failures,
+            warnings,
+        )
     # Snapshots are core: vcsim creates them and serves the tree back
     # (names included). Skipped when the live summary has no snapshot
     # state (None — the leaf retrieve failed, not "zero snapshots").

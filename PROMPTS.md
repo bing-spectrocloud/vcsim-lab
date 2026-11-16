@@ -612,3 +612,49 @@ over 23 assessed VMs — the two legacy Windows guests warn on
 guest-os in both contexts (in neither list) and block warm
 (powered off); Photon passes guest-os cold and warns warm (not
 Cirrus-qualified), warn verdict in both.
+
+## 22. 2026-11-16 09:05 — Four coverage VMs for untested preflight checks
+
+> review the various vcenter cases in the "preflight" project, and
+> assess the VMs created in the "vcsim-lab" project and let me know
+> if we need more VMs with different configurations for testing
+
+Coverage review first: of preflight's 34 VM-scope vCenter checks,
+22 fired non-pass findings live and 12 always passed. Five of the
+12 were fillable — vcsim was probed live to confirm it serves each
+config (nestedHVEnabled=True read back; all five legacy device
+classes accepted unbacked and served back; `ZZ_Test-VM` accepted
+as a name). The other six are untestable in vcsim no matter the
+VM: vm-encryption (CryptoManager is a stub with no EncryptVM_Task),
+fault-tolerance (no API to set ftInfo), secure-boot BLOCK (vcsim
+drops the flag), vm-arch x86/arm (no Tools arch data), tools-status
+PASS (always toolsNotInstalled), Windows power checks +
+cirrus-endpoints (no guest operations). firmware-type WARN is
+unreachable by design (only fires on unrecognized firmware).
+
+Done. Two new builder fields: `nested_virt:` (nestedHVEnabled in
+the create spec) and `extra_devices:` (usb/serial/parallel/sound/
+floppy, added post-create in one reconfig, skip-if-present on
+re-runs; validated against EXTRA_DEVICE_TYPES, duplicates
+rejected). Both flow through the query summary and the verifier
+(core checks, skipped when the live summary predates the fields).
+Lab is now 30 VMs / 52 disks, 15 BIOS / 15 EFI, snapshots still
+16. The four new VMs:
+
+- sap-hana-production-database-server-primary-001-eu-central-instance
+  — 67-char valid name, 48 vCPU / 512 GB RAM, 3x1 TB disks,
+  lab/Prod/DB, poweredOff. Fires cpu-memory-size (vCPU + RAM),
+  disk-size, and vm-name (length branch).
+- Win2019_FileServer — uppercase + underscore name, lab/Lab/Legacy.
+  Fires vm-name (regex branch).
+- kvm-nested-host — nested_virt: true, lab/Lab. Fires nested-virt.
+- win10-legacy-desk — all five extra devices, lab/Prod/VDI. Fires
+  unsupported-devices with all five labels.
+
+18 new tests in tests/test_coverage_vms.py (config, create spec,
+device builders, add_extra_devices idempotency, query summary,
+verify, lab matrix); pinned counts updated in 7 files. Suite 317
+passed. Live-verified: full build 30 VMs / 109 steps / 0 failed,
+verify 0 failures; preflight cold assess confirms all five checks
+fire (7 warn findings across the four VMs), counts now 0/12/15
+over 27 assessed VMs.

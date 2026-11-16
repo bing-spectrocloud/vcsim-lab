@@ -211,6 +211,7 @@ def build_create_spec(
         memoryMB=spec.memory_mb,
         cpuHotAddEnabled=spec.cpu_hot_add,
         memoryHotAddEnabled=spec.memory_hot_add,
+        nestedHVEnabled=spec.nested_virt,
         firmware=spec.firmware,
         changeTrackingEnabled=cbt,
         annotation=spec.annotation or spec.os_label,

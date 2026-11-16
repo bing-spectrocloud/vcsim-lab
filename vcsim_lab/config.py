@@ -27,6 +27,11 @@ import yaml
 CONTROLLER_TYPES = ("nvme", "pvscsi", "lsi-sas", "lsi-logic", "ahci")
 NIC_TYPES = ("vmxnet3", "e1000", "e1000e")
 GPU_MODES = ("passthrough", "dynamic", "vgpu")
+# Legacy devices a VM can carry via `extra_devices:` — the devices
+# preflight's unsupported-devices check warns about (KubeVirt has no
+# equivalent for them). vcsim accepts all five with no backing and
+# serves them back (verified live, entry 22).
+EXTRA_DEVICE_TYPES = ("usb", "serial", "parallel", "sound", "floppy")
 GPU_VENDORS = {"nvidia": 0x10DE, "amd": 0x1002}
 # (vendor, model) -> PCI device id. Used to cross-check a declared model
 # against device_id for passthrough/dynamic GPUs. vGPU-only models (e.g.
@@ -309,6 +314,9 @@ class VmSpec:
     disk_enable_uuid: bool | str = RANDOM
     cpu_hot_add: bool = False
     memory_hot_add: bool = False
+    # Nested virtualization (nestedHVEnabled in the create spec).
+    # vcsim accepts it and serves it back (verified live, entry 22).
+    nested_virt: bool = False
     disks: list[DiskSpec] = field(default_factory=list)
     # Dynamic-disk volumes (Windows only, declared-only — see
     # VolumeSpec). A VM with no dynamic disks has no volumes.
@@ -320,6 +328,10 @@ class VmSpec:
     snapshots: list[SnapshotSpec] = field(default_factory=list)
     nics: list[NicSpec] = field(default_factory=list)
     cdrom: CdromSpec | None = None
+    # Legacy devices added post-create by the builder (see
+    # EXTRA_DEVICE_TYPES). Each is a plain device with no backing —
+    # enough for the inventory to carry it.
+    extra_devices: list[str] = field(default_factory=list)
     boot_order: list[str] = field(default_factory=lambda: ["disk"])
     extra_config: dict[str, str] = field(default_factory=dict)
 
@@ -1002,6 +1014,14 @@ def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
         raise ConfigError(f"{where}: cores_per_socket ({cores}) must divide cpus ({cpus})")
     if int(raw.get("memory_mb", 4096)) <= 0:
         raise ConfigError(f"{where}: memory_mb must be positive")
+    extra_devices = list(raw.get("extra_devices") or [])
+    for kind in extra_devices:
+        if kind not in EXTRA_DEVICE_TYPES:
+            raise ConfigError(
+                f"{where}: extra_devices entries must be one of {list(EXTRA_DEVICE_TYPES)}, got {kind!r}"
+            )
+    if len(set(extra_devices)) != len(extra_devices):
+        raise ConfigError(f"{where}: extra_devices has duplicates: {extra_devices}")
     hw = raw.get("hardware_version", "vmx-20")
     if not _HW_VERSION_RE.match(hw):
         raise ConfigError(f"{where}: hardware_version {hw!r} should look like 'vmx-20'")
@@ -1035,11 +1055,13 @@ def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
         disk_enable_uuid=disk_enable_uuid,
         cpu_hot_add=bool(raw.get("cpu_hot_add", False)),
         memory_hot_add=bool(raw.get("memory_hot_add", False)),
+        nested_virt=bool(raw.get("nested_virt", False)),
         disks=disks,
         volumes=volumes,
         snapshots=snapshots,
         nics=nics,
         cdrom=cdrom,
+        extra_devices=extra_devices,
         boot_order=list(boot_order),
         extra_config={str(k): str(v) for k, v in (raw.get("extra_config") or {}).items()},
     )

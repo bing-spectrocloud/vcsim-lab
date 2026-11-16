@@ -330,6 +330,21 @@ def add_tpm(si, vm: vim.VirtualMachine, spec: VmSpec, report: VmReport) -> None:
     report.add("tpm", "ok", "VirtualTPM device added")
 
 
+def add_extra_devices(si, vm: vim.VirtualMachine, spec: VmSpec, report: VmReport) -> None:
+    """Add the VM's declared legacy devices (extra_devices:) in one
+    reconfig, skipping any already present so re-runs are idempotent."""
+    present = set(devices.extra_device_kinds(vm.config.hardware.device))
+    missing = [k for k in spec.extra_devices if k not in present]
+    if not missing:
+        report.add("extra-devices", "skipped", "all declared devices already present")
+        return
+    cfg = vim.vm.ConfigSpec(
+        deviceChange=[devices.build_extra_device(kind) for kind in missing]
+    )
+    _reconfig(si, vm, cfg, f"add extra devices to {spec.name}")
+    report.add("extra-devices", "ok", ", ".join(missing))
+
+
 def add_gpu(si, vm: vim.VirtualMachine, spec: VmSpec, hosts, report: VmReport) -> None:
     if any(isinstance(d, vim.vm.device.VirtualPCIPassthrough) for d in vm.config.hardware.device):
         report.add("gpu", "skipped", "VM already has a PCI passthrough device")
@@ -541,6 +556,9 @@ def build_one_vm(
         video_step,
         ("tpm", lambda: add_tpm(si, vm, spec, report)) if spec.tpm else (None, None),
         ("gpu", lambda: add_gpu(si, vm, spec, refs["hosts"], report)) if spec.gpu else (None, None),
+        ("extra-devices", lambda: add_extra_devices(si, vm, spec, report))
+        if spec.extra_devices
+        else (None, None),
         ("vapp-config", lambda: apply_vapp_config(si, vm, spec, report))
         if spec.vapp
         else (None, None),

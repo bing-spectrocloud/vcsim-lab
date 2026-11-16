@@ -32,6 +32,10 @@ KEY_DISK = -200
 KEY_NIC = -400
 KEY_TPM = -500
 KEY_GPU = -600
+# Extra (legacy) devices start here, one key per kind in
+# EXTRA_DEVICE_TYPES order: usb -700, serial -701, parallel -702,
+# sound -703, floppy -704.
+KEY_EXTRA_BASE = -700
 
 # PCI class codes for display devices (VGA controller / 3D controller).
 PCI_CLASS_DISPLAY = (0x0300, 0x0302)
@@ -319,6 +323,51 @@ def build_tpm(key: int = KEY_TPM) -> vim.vm.device.VirtualDeviceSpec:
     tpm.key = key
     tpm.deviceInfo = _description("Virtual TPM")
     return _device_spec(tpm)
+
+
+# ---------------------------------------------------------------------------
+# Extra (legacy) devices
+# ---------------------------------------------------------------------------
+
+# `extra_devices:` kind -> the pyVmomi device class. The order matches
+# config.EXTRA_DEVICE_TYPES, so the device key is KEY_EXTRA_BASE + index.
+EXTRA_DEVICE_CLASSES = {
+    "usb": vim.vm.device.VirtualUSBController,
+    "serial": vim.vm.device.VirtualSerialPort,
+    "parallel": vim.vm.device.VirtualParallelPort,
+    "sound": vim.vm.device.VirtualSoundCard,
+    "floppy": vim.vm.device.VirtualFloppy,
+}
+
+
+def build_extra_device(kind: str, key: int | None = None) -> vim.vm.device.VirtualDeviceSpec:
+    """One legacy device, with no backing.
+
+    vcsim accepts all five kinds unbacked and serves them back with
+    their real classes (verified live, entry 22); a real vCenter would
+    want a backing for serial/parallel/floppy, but the lab only needs
+    the inventory to carry the device — preflight's
+    unsupported-devices check keys off the device class alone.
+    """
+    cls = EXTRA_DEVICE_CLASSES[kind]
+    if key is None:
+        key = KEY_EXTRA_BASE + list(EXTRA_DEVICE_CLASSES).index(kind)
+    device = cls()
+    device.key = key
+    device.deviceInfo = _description(f"Legacy {kind} device")
+    return _device_spec(device)
+
+
+def extra_device_kinds(hw_devices) -> list[str]:
+    """The `extra_devices:` kinds present in a live device list,
+    in EXTRA_DEVICE_TYPES order. Used by the builder (skip-if-present
+    on re-runs), the query summary and the verifier."""
+    present = set()
+    for dev in hw_devices:
+        for kind, cls in EXTRA_DEVICE_CLASSES.items():
+            if isinstance(dev, cls):
+                present.add(kind)
+    return [k for k in EXTRA_DEVICE_CLASSES if k in present]
 
 
 # ---------------------------------------------------------------------------

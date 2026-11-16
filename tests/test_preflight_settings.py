@@ -536,9 +536,9 @@ class TestLabMatrix(unittest.TestCase):
             (v.name, n) for v in lab.vms for n in v.nics if n.sriov
         ]
         self.assertEqual([n for n, _ in sriov], ["opnsense-fw"])
-        # 46 disks (was 43 — win2008r2-legacy, winxp64-legacy and
-        # photon-container each add one OS disk).
-        self.assertEqual(sum(len(v.disks) for v in lab.vms), 46)
+        # 52 disks (was 46 — the big HANA VM adds three 1 TB disks,
+        # the other three new VMs one disk each).
+        self.assertEqual(sum(len(v.disks) for v in lab.vms), 52)
 
     def test_dev_lab_loads_with_enable_uuid(self):
         lab = config.load_lab(DEV_LAB)

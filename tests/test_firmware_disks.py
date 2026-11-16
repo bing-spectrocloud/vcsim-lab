@@ -284,11 +284,11 @@ class TestSpecBuilding(unittest.TestCase):
 class TestLabMatrix(unittest.TestCase):
     def test_lab_counts(self):
         lab = config.load_lab(LAB)
-        self.assertEqual(len(lab.vms), 26)
+        self.assertEqual(len(lab.vms), 30)
 
     def test_firmware_mix_is_balanced(self):
         # A future edit must not silently unbalance the mix: both
-        # firmwares well represented (13 BIOS / 13 EFI at last count).
+        # firmwares well represented (15 BIOS / 15 EFI at last count).
         lab = config.load_lab(LAB)
         bios = [v for v in lab.vms if v.firmware == "bios"]
         efi = [v for v in lab.vms if v.firmware == "efi"]
