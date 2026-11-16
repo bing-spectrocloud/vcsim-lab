@@ -17,6 +17,8 @@ Two rules that shape this module:
 
 from __future__ import annotations
 
+import hashlib
+
 from pyVmomi import vim
 
 from .config import GpuSpec, NicSpec, VAppSpec, VmSpec, parse_hex_id, to_signed_short
@@ -101,6 +103,19 @@ def is_scsi_controller(kind: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def rdm_device_name(vm_name: str, disk_index: int) -> str:
+    """A deterministic fake LUN id for an RDM disk.
+
+    Real vCenter maps a LUN the host actually sees; vcsim accepts any
+    string and serves it back (verified live, govmomi v0.56.2), so the
+    lab derives a stable NAA id from the VM name + disk index — the
+    same lab always builds the same deviceName, and verify can match
+    on it.
+    """
+    digest = hashlib.sha1(f"{vm_name}:{disk_index}".encode()).hexdigest()[:20]
+    return f"naa.6000c29{digest}"
+
+
 def build_disk(
     vm_name: str,
     size_gb: int,
@@ -112,6 +127,10 @@ def build_disk(
     eager: bool = False,
     disk_mode: str = "persistent",
     disk_index: int = 0,
+    backing: str = "vmdk",
+    rdm_compatibility: str = "physicalCompatibility",
+    rdm_device: str | None = None,
+    shared: bool = False,
 ) -> vim.vm.device.VirtualDeviceSpec:
     disk = vim.vm.device.VirtualDisk()
     disk.key = key
@@ -120,14 +139,28 @@ def build_disk(
     disk.capacityInKB = size_gb * 1024 * 1024
     disk.deviceInfo = _description(f"Hard disk {disk_index + 1}", f"{size_gb} GB")
 
-    backing = vim.vm.device.VirtualDisk.FlatVer2BackingInfo()
-    backing.diskMode = disk_mode
-    backing.thinProvisioned = thin
-    backing.eagerlyScrub = bool(eager and not thin)
-    backing.fileName = f"[{datastore_name}] {vm_name}/{vm_name}.vmdk" if disk_index == 0 else (
+    file_name = f"[{datastore_name}] {vm_name}/{vm_name}.vmdk" if disk_index == 0 else (
         f"[{datastore_name}] {vm_name}/{vm_name}_{disk_index}.vmdk"
     )
-    disk.backing = backing
+    if backing == "rdm":
+        # A Raw Device Mapping: the VMDK is only a mapping file pointing
+        # at the LUN; there is no thin/eager provisioning and no
+        # diskMode on an RDM backing.
+        rdm = vim.vm.device.VirtualDisk.RawDiskMappingVer1BackingInfo()
+        rdm.deviceName = rdm_device or rdm_device_name(vm_name, disk_index)
+        rdm.compatibilityMode = rdm_compatibility
+        rdm.fileName = file_name
+        disk.backing = rdm
+    else:
+        flat = vim.vm.device.VirtualDisk.FlatVer2BackingInfo()
+        flat.diskMode = disk_mode
+        flat.thinProvisioned = thin
+        flat.eagerlyScrub = bool(eager and not thin)
+        flat.fileName = file_name
+        if shared:
+            # Multi-writer: the shape cluster quorum disks use.
+            flat.sharing = "sharingMultiWriter"
+        disk.backing = flat
 
     spec = _device_spec(disk)
     spec.fileOperation = vim.vm.device.VirtualDeviceSpec.FileOperation.create
@@ -172,6 +205,21 @@ def _nic_backing(network_obj, network_type: str, opaque: tuple[str, str] | None 
     return backing
 
 
+def nic_device_class_name(nic: NicSpec) -> str:
+    """The live device class name a NIC spec builds to.
+
+    Used by verify to compare the declared NIC against the live device
+    type: an SR-IOV NIC is a VirtualSriovEthernetCard, an emulated NIC
+    is its _NIC_CLASS entry.
+    """
+    # pyVmomi class names are fully dotted ("vim.vm.device.…") — the
+    # same form query reports for live devices, so the two compare
+    # equal. Do not shorten either side.
+    if nic.sriov:
+        return vim.vm.device.VirtualSriovEthernetCard.__name__
+    return _NIC_CLASS[nic.type].__name__
+
+
 def build_nic(
     nic: NicSpec,
     key: int,
@@ -180,6 +228,21 @@ def build_nic(
     label: str = "Network adapter 1",
     opaque: tuple[str, str] | None = None,
 ) -> vim.vm.device.VirtualDeviceSpec:
+    if nic.sriov:
+        # An SR-IOV virtual function: the card is backed by a physical
+        # function on the host, not by a network. vcsim accepts an
+        # empty SriovBackingInfo and serves the card back as a
+        # VirtualSriovEthernetCard (verified live, govmomi v0.56.2); a
+        # real vCenter needs physicalFunctionBacking set to a PF the
+        # host actually has. The logical network is informational here
+        # — the VF's traffic follows the PF, not a portgroup.
+        card = vim.vm.device.VirtualSriovEthernetCard()
+        card.key = key
+        card.deviceInfo = _description(label, network_obj.name)
+        card.addressType = "generated"  # vCenter assigns the MAC
+        card.backing = vim.vm.device.VirtualSriovEthernetCard.SriovBackingInfo()
+        card.connectable = _connect_info()
+        return _device_spec(card)
     card = _NIC_CLASS[nic.type]()
     card.key = key
     card.deviceInfo = _description(label, network_obj.name)

@@ -41,6 +41,7 @@ vms:
     cbt: false
     fast_boot: true
     tools_status: toolsNotRunning
+    disk_enable_uuid: true
     disks:
       - size_gb: 40
         controller: lsi-sas

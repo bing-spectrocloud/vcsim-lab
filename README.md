@@ -130,18 +130,18 @@ host, 2 datastores) with 3 VMs — see "Multiple environments".
 | VM | OS | vCPU / RAM | Firmware | Storage | Network | Special |
 |---|---|---|---|---|---|---|
 | win11-secure | Windows 11 | 4 / 8 GB | EFI + Secure Boot + TPM | NVMe 100G thin + 100G thin | DVPG0 vmxnet3 | CD-ROM, boot disk > cdrom; dynamic simple volume (Data) |
-| win2022-sql | Windows Server 2022 | 8 / 16 GB | EFI + TPM | PVSCSI 100G thin + 2× 500G eager | DVPG0 + DVPG1 | mirrored dynamic volume (SQLData) |
+| win2022-sql | Windows Server 2022 | 8 / 16 GB | EFI + TPM | PVSCSI 100G thin + 2× 500G eager | DVPG0 + DVPG1 | mirrored dynamic volume (SQLData); disk.EnableUUID on |
 | win10-vdi | Windows 10 | 4 / 8 GB | EFI + Secure Boot + TPM | NVMe 80G thin + 2× 100G thin | DVPG0 vmxnet3 | 3D video, 128 MB VRAM; striped dynamic volume (Scratch) |
 | win2019-fileserver | Windows Server 2019 | 4 / 8 GB | BIOS, vmx-19 | PVSCSI 100G thin + 2× 500G thin | DVPG0 vmxnet3 | spanned dynamic volume (FileShare) |
 | ubuntu-gpu-llm | Ubuntu | 8 / 32 GB | EFI | NVMe 200G + 500G thin | DVPG0 vmxnet3 | GPU passthrough (T4) |
 | ubuntu-vgpu-vdi | Ubuntu | 4 / 16 GB | EFI | NVMe 100G thin | DVPG0 vmxnet3 | vGPU `nvidia_a100-40c` |
 | rhel9-ai-train | RHEL 9 | 16 / 64 GB | EFI + Secure Boot + TPM | NVMe 2× 500G thin | DVPG0 + NSX opaque | GPU dynamic (A100) |
 | debian12-web | Debian 12 | 2 / 4 GB | BIOS, vmx-19 | LSI SAS 40G thin | VM Network e1000 | PXE first: network > disk |
-| rhel9-db | RHEL 9 | 8 / 32 GB | BIOS | PVSCSI 80G + 500G eager + 200G | DVPG0 vmxnet3 | CD-ROM, 3 datastores |
-| sles15-sap | SLES 15 | 8 / 32 GB | EFI + Secure Boot + TPM | NVMe 150G + 200G thin | DVPG0 vmxnet3 | CD-ROM first: cdrom > disk |
-| freebsd13-nas | FreeBSD 13 | 2 / 4 GB | BIOS, vmx-19 | LSI Logic 60G + 2× LSI SAS 200G | VM Network e1000e | |
+| rhel9-db | RHEL 9 | 8 / 32 GB | BIOS | PVSCSI 80G + 500G eager + 200G | DVPG0 vmxnet3 | CD-ROM, 3 datastores; disk.EnableUUID on |
+| sles15-sap | SLES 15 | 8 / 32 GB | EFI + Secure Boot + TPM | NVMe 150G + 200G thin + 10G shared | DVPG0 vmxnet3 | CD-ROM first: cdrom > disk; shared quorum disk |
+| freebsd13-nas | FreeBSD 13 | 2 / 4 GB | BIOS, vmx-19 | LSI Logic 60G + LSI SAS 200G + 200G RDM | VM Network e1000e | RDM data disk (physical compatibility) |
 | solaris11-db | Oracle Solaris 11 | 2 / 4 GB | BIOS, vmx-19 | LSI SAS 80G + 200G thin | VM Network e1000 | 1 snapshot (`baseline`), toolsOk declared |
-| centos8-legacy | CentOS 8 | 2 / 2 GB | BIOS, vmx-19 | LSI Logic 60G thick lazy + 100G thin | VM Network e1000 | boot disk > network |
+| centos8-legacy | CentOS 8 | 2 / 2 GB | BIOS, vmx-19 | LSI Logic 60G thick lazy + 100G thin | VM Network e1000 | boot disk > network; data disk independent-nonpersistent |
 | ubuntu-k8s-node | Ubuntu | 4 / 8 GB | BIOS, hot-add | NVMe 100G + 100G thin | DVPG0 + DVPG1 | boot disk > network |
 | ubuntu-nvidia-a100-pt | Ubuntu | 16 / 64 GB | EFI | NVMe 500G thin | DVPG0 vmxnet3 | GPU passthrough, NVIDIA A100 80GB |
 | ubuntu-nvidia-h100-vgpu | Ubuntu | 8 / 32 GB | EFI | NVMe 200G thin | DVPG0 vmxnet3 | vGPU `nvidia_h100-80c` |
@@ -150,7 +150,7 @@ host, 2 datastores) with 3 VMs — see "Multiple environments".
 | win2022-template | Windows Server 2022 | 4 / 8 GB | EFI | NVMe 100G thin | DVPG0 vmxnet3 | template |
 | ubuntu-2404-template | Ubuntu | 2 / 4 GB | BIOS | NVMe 60G thin | DVPG0 vmxnet3 | template |
 | rhel9-template | RHEL 9 | 2 / 4 GB | BIOS | NVMe 60G thin | DVPG0 vmxnet3 | template |
-| opnsense-fw | FreeBSD 13 (OPNsense) | 2 / 4 GB | BIOS, vmx-19 | LSI SAS 40G thin | VM Network + DVPG0 | appliance, vApp |
+| opnsense-fw | FreeBSD 13 (OPNsense) | 2 / 4 GB | BIOS, vmx-19 | LSI SAS 40G thin | VM Network SR-IOV + DVPG0 | appliance, vApp; SR-IOV WAN NIC |
 | truenas-storage | FreeBSD 13 (TrueNAS) | 4 / 8 GB | BIOS | NVMe 40G + 200G thin | DVPG0 vmxnet3 | appliance, vApp |
 
 GPU VMs also get a full memory reservation and the Broadcom KB 334594
@@ -223,10 +223,32 @@ rejects TPM or Secure Boot on a BIOS VM — and for the Windows 11 VMs.
 The templates span both firmwares (Windows Server 2022 on EFI, Ubuntu
 and RHEL on BIOS), so cloning covers both boot modes.
 
-**14 of the 23 VMs have 2+ disks** (42 disks in total), spread across
+**14 of the 23 VMs have 2+ disks** (43 disks in total), spread across
 NVMe, PVSCSI, LSI SAS and LSI Logic controllers, thin and thick
 provisioning, and — for the multi-datastore VMs — the builder's
 cross-datastore directory pre-creation (see below).
+
+**Disk modes, RDMs and shared disks** exist so migration tooling has
+real shapes to check against: `disk_mode:` is `persistent` (the
+default), `independent-persistent`, or `independent-nonpersistent`
+(`centos8-legacy`'s data disk is non-persistent — writes are discarded
+on power-off); `backing: rdm` maps a LUN directly into the VM
+(`freebsd13-nas`' third disk, physical compatibility — the deviceName
+is a deterministic fake NAA id derived from the VM name + disk index,
+since vcsim has no real LUNs); and `shared: true` marks a multi-writer
+disk (`sles15-sap`'s 10 GB quorum disk). RDM disks ignore thin/eager
+and have no diskMode; shared disks require a VMDK backing. All three
+were verified live against vcsim — it accepts the specs and serves the
+backing, sharing and diskMode back intact. `verify.py` compares the
+full disk tuple (size, datastore, thin, disk_mode, backing, shared,
+rdm_compatibility) per VM.
+
+**SR-IOV NICs** are the same idea for networking: `sriov: true` on a
+NIC builds a `VirtualSriovEthernetCard` instead of an emulated card
+(`opnsense-fw`'s WAN NIC). vcsim accepts an empty SriovBackingInfo
+and serves the card back as SR-IOV; a real vCenter would need a
+physical function to bind it to. `verify.py` compares NIC device
+types (emulated class or SR-IOV) per VM.
 
 **Basic vs. dynamic disks** is the Windows Disk Management distinction,
 and it is declared in the model, not enforced by vSphere: there is no
@@ -338,10 +360,10 @@ independent: they sit in the `lab/Appliances` folder *and* in the
 
 ### Randomized VM attributes
 
-Four per-VM attributes vary across the lab — Changed Block Tracking
-(CBT), power state, fast boot, and VMware Tools status — each set
-explicitly or to `random` in `vms.yaml` and resolved from
-`lab.random_seed` (default 42) at build time:
+Five per-VM attributes vary across the lab — Changed Block Tracking
+(CBT), power state, fast boot, VMware Tools status, and
+disk.EnableUUID — each set explicitly or to `random` in `vms.yaml`
+and resolved from `lab.random_seed` (default 42) at build time:
 
 ```yaml
 lab:
@@ -352,21 +374,25 @@ lab:
     power_state: random      # poweredOn | poweredOff | suspended
     fast_boot: random        # true | false
     tools_status: random     # toolsNotInstalled | toolsNotRunning | toolsOk | toolsOld
+    disk_enable_uuid: true   # explicit: SQL Server references disks by UUID
 ```
 
 The assignment is **seeded, not random per run**: each VM draws from
 its own RNG seeded with `"<seed>:<vm-name>"`, in the fixed order cbt →
-power_state → fast_boot → tools_status, and only for fields set to
-`random`. The same `vms.yaml` + seed always gives the same assignment,
-and adding a VM never reshuffles the others. Change the seed and the
+power_state → fast_boot → tools_status → disk_enable_uuid, and only
+for fields set to `random`. The same `vms.yaml` + seed always gives
+the same assignment, and adding a VM never reshuffles the others.
+Draw order matters: the RNG is sequential, so a new random field must
+draw last, or every field after it reshuffles. Change the seed and the
 next build reconciles the lab to the new assignment (CBT is changed via
 reconfig — the VM is powered off first, since real vCenter requires
 that — and the power-state step restores the target state afterwards).
 The build report records each VM's assigned values (`assigned: cbt=…
-power=… fast_boot=… tools=…`), and `verify.py` checks the live lab
-against the same resolution. With seed 42 the lab lands at 10 poweredOn
-/ 6 suspended / 7 poweredOff, CBT on 10/23, fast-boot 9/23, and all
-four tools statuses declared — five VMs declare `toolsOk` explicitly
+power=… fast_boot=… tools=… disk_enable_uuid=…`), and `verify.py`
+checks the live lab against the same resolution. With seed 42 the lab
+lands at 10 poweredOn / 6 suspended / 7 poweredOff, CBT on 10/23,
+fast-boot 9/23, disk.EnableUUID on 12/23, and all four tools statuses
+declared — five VMs declare `toolsOk` explicitly
 (`win2022-sql`, `debian12-web`, `solaris11-db`, `ubuntu-k8s-node`,
 `truenas-storage`: Windows, Debian, Solaris, Ubuntu and FreeBSD), and
 two more draw it from the seed.
@@ -380,6 +406,7 @@ v0.56.2):
 | Power state | `runtime.powerState` | Yes — PowerOn, PowerOff and `SuspendVM_Task` all work; suspended reads back as `suspended` | Enforced after create (suspend = power on, then suspend); **core** verify check |
 | Fast boot | `bootOptions.bootDelay` | Yes — stored and served back | **There is no native vSphere VM "fast boot" setting** (the only quick-boot fields are host-level ESXi Quick Boot). The lab represents it as `bootDelay = 0` (boot immediately) vs. the standard 3000 ms; **core** verify check |
 | Tools status | `GuestInfo.toolsStatus` | No — always `toolsNotInstalled` / `guestToolsNotRunning`, in every power state; no setter API exists | Declared only. Five VMs declare `toolsOk` explicitly (Windows, Debian, Solaris, Ubuntu, FreeBSD) and the live value is still `toolsNotInstalled` for all 23 — the query tool shows live + declared and flags mismatches; **best-effort** verify warning |
+| disk.EnableUUID | `extraConfig` key `disk.EnableUUID` | Yes — stamped at create time, served back intact | Stamped on every VM as explicit TRUE/FALSE (the vSphere default is FALSE); **core** verify check. Skipped for VMs built before the feature (no key) |
 
 Templates are exempt from power-state assignment (they always stay
 `poweredOff`); the two appliances keep explicit `power_state:

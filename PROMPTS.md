@@ -518,3 +518,66 @@ objects, the API serves `folder` per VM, a re-run leaves the folder
 count at 10, and teardown `--remove-folders` deletes all 10 folders
 with the vm folder left empty. 261 tests (41 new in
 `tests/test_folders.py`, 1 new API folder test).
+
+## 20. 2026-11-15 17:20 — Settings for testing preflight checks: disk.EnableUUID, RDM, shared and independent disks, SR-IOV NICs
+
+> Can you update vcsim-lab repo with various settings so I can use
+> them to test new features in preflight check
+> (then, on the scope question: "Add those, plus try RDM / shared /
+> SR-IOV")
+
+Outcome: the lab now varies every setting preflight checks that vcsim
+can express. First, live experiments against a scratch vcsim (one test
+VM per feature, all five accepted and reading back intact): `disk.EnableUUID`
+in extraConfig, `diskMode: independent-nonpersistent`, `sharing:
+sharingMultiWriter`, an RDM `RawDiskMappingVer1BackingInfo` disk
+(physical compatibility, fake NAA deviceName), and a
+`VirtualSriovEthernetCard` (empty SriovBackingInfo — vcsim serves no
+host PCI devices to bind a physical function to).
+
+(1) New per-VM attribute `disk_enable_uuid` (true | false | random,
+default random), following the cbt/fast_boot pattern end to end:
+`VmSpec` + validation, `ResolvedAssignment` (defaulted False so older
+constructions keep working) + `to_dict`, `resolve_random_assignments`
+— drawn LAST, after tools_status, so the sequential RNG does not
+reshuffle any earlier draw (pinned by a test) — `build_create_spec`
+stamps `disk.EnableUUID` into extraConfig as explicit TRUE/FALSE on
+every VM (a user `extra_config` entry wins via setdefault), query
+reports the live value, verify checks it as a core check (skipped when
+the live VM has no key — built before the feature). With seed 42 the
+lab lands at 12/23 on; `win2022-sql` and `rhel9-db` set it explicitly
+true, `dev-win10` too. (2) Per-disk `backing: vmdk | rdm` +
+`rdm_compatibility` (physical/virtual): `freebsd13-nas`' third disk
+is an RDM (physical compatibility; deviceName is a deterministic fake
+NAA id from the VM name + disk index via `devices.rdm_device_name`).
+RDM disks ignore thin/eager and have no diskMode. (3) Per-disk
+`shared: true` (multi-writer): `sles15-sap` gained a 10 GB quorum disk
+— the lab is now 43 disks. (4) Per-disk `disk_mode` is now validated
+against the three real modes; `centos8-legacy`'s data disk is
+`independent-nonpersistent`. (5) Per-NIC `sriov: true` builds a
+VirtualSriovEthernetCard (`opnsense-fw`'s WAN NIC; `type` must not be
+combined with it). Query reports backing / rdm_compatibility /
+rdm_device_name / shared per disk and sriov per NIC; verify compares
+the full disk tuple and the NIC device types (with a None-safe sort
+key — RDM disks serve thin/diskMode as None, and a plain `sorted()`
+crashes comparing None to bool, found by the live verify run).
+
+Two pyVmomi gotchas, both fixed here and in preflight: class
+`__name__`s are fully dotted (`vim.vm.device.VirtualDisk.…`), so a
+short-name match never fires — RDM detection now uses `isinstance`
+in both repos (preflight's `disk-rdm` check could never fire before
+this; see preflight PROMPTS entry 53), and `nic_device_class_name`
+returns the dotted class name to match what query reports live.
+
+Live-validated end to end: full local build 23 VMs / 91 steps / 0
+failed, verify 0 failures (24 best-effort warnings: tools-status +
+Secure Boot, as before), and a preflight assess against the local lab
+fires every new check — disk-enable-uuid WARN on 11 VMs (the 12th is
+a template), disk-mode BLOCK on centos8-legacy, disk-rdm BLOCK on
+freebsd13-nas, disk-shared BLOCK on sles15-sap, nic-sriov WARN on
+opnsense-fw. Note: the Render deployment rebuilds the lab from the
+repo on deploy, so the live lab picks these settings up on the next
+redeploy; a re-run of build_lab.py over an existing lab does NOT
+retrofit extraConfig (no reconcile step — same as diskLayout).
+298 tests (37 new in `tests/test_preflight_settings.py`, plus 2
+assertions added to `tests/test_random_attrs.py`).

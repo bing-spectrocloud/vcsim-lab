@@ -499,7 +499,9 @@ def build_one_vm(
             network_types=refs["network_types"],
             opaque=refs["opaque"],
         )
-        config = specs.build_create_spec(spec, plan, resolved, cbt=assigned.cbt)
+        config = specs.build_create_spec(
+            spec, plan, resolved, cbt=assigned.cbt, disk_enable_uuid=assigned.disk_enable_uuid
+        )
         # Remove any stale home directories from an earlier attempt first:
         # vcsim fails the create with FileAlreadyExists when the home
         # directory is present, and (v0.56.2) can even crash the simulator
@@ -629,7 +631,7 @@ def print_report(report: BuildReport) -> None:
             print(
                 f"  assigned: cbt={a['cbt']} power={a['power_state']} "
                 f"fast_boot={a['fast_boot']} (bootDelay {a['boot_delay_ms']}ms) "
-                f"tools={a['tools_status']}"
+                f"tools={a['tools_status']} disk_enable_uuid={a['disk_enable_uuid']}"
             )
         for step in vm.steps:
             mark = {"ok": "ok  ", "skipped": "skip", "failed": "FAIL"}[step.status]

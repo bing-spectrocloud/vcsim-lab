@@ -11,9 +11,10 @@ vcsim serves config.template and the full vAppConfig back reliably.
 
 The per-VM attributes are checked against the resolved assignment
 (seed-resolved, see config.resolve_random_assignments): CBT, power
-state and boot delay are core (vcsim serves them reliably); tools
-status is best-effort — it is guest-reported with no setter API and
-vcsim always reports toolsNotInstalled, so a mismatch is a warning.
+state, boot delay and disk.EnableUUID are core (vcsim serves them
+reliably); tools status is best-effort — it is guest-reported with
+no setter API and vcsim always reports toolsNotInstalled, so a
+mismatch is a warning.
 
 The basic/dynamic disk layout is declared-only (no vSphere property),
 but VMs with dynamic disks carry the layout in extraConfig, so verify
@@ -37,6 +38,7 @@ from __future__ import annotations
 
 import json
 
+from . import devices
 from .config import (
     POWER_STATES,
     TOOLS_STATUSES,
@@ -75,6 +77,7 @@ def _default_assignment(spec: VmSpec) -> ResolvedAssignment:
         tools_status=(
             spec.tools_status if spec.tools_status in TOOLS_STATUSES else "toolsNotInstalled"
         ),
+        disk_enable_uuid=spec.disk_enable_uuid is True,
     )
 
 
@@ -112,6 +115,18 @@ def verify_vm(
             failures,
             warnings,
         )
+    # disk.EnableUUID is core: the builder stamps it into extraConfig
+    # on every VM and vcsim serves extraConfig back intact. Skipped
+    # when the live summary has no value (None — a VM built before the
+    # feature existed, where the key is absent).
+    if live.get("disk_enable_uuid") is not None:
+        _check(
+            "disk_enable_uuid",
+            assigned.disk_enable_uuid,
+            live["disk_enable_uuid"],
+            failures,
+            warnings,
+        )
     if spec.vapp is not None:
         live_vapp = live.get("vapp") or {}
         product = live_vapp.get("product") or {}
@@ -130,11 +145,43 @@ def verify_vm(
             warnings,
         )
 
-    expected_disks = sorted((d.size_gb, d.datastore, d.thin) for d in spec.disks)
-    actual_disks = sorted(
-        (d["capacity_gb"], d["datastore"], d["thin"]) for d in live["disks"]
+    # Disks are compared as a multiset of full tuples, so a disk's
+    # attributes stay paired with its size/datastore. RDM disks have
+    # no thin provisioning and no diskMode (vcsim serves None for
+    # both), so the expected values are None there. Live dicts from
+    # older fixtures may lack the newer keys — .get() defaults match
+    # the declared defaults, so those fixtures still pass.
+    def _expected_disk(d):
+        if d.backing == "rdm":
+            return (d.size_gb, d.datastore, None, None, "rdm", False, d.rdm_compatibility)
+        return (d.size_gb, d.datastore, d.thin, d.disk_mode, "vmdk", d.shared, None)
+
+    def _live_disk(d):
+        return (
+            d["capacity_gb"],
+            d["datastore"],
+            d["thin"],
+            d.get("disk_mode", "persistent"),
+            d.get("backing", "vmdk"),
+            d.get("shared", False),
+            d.get("rdm_compatibility"),
+        )
+
+    def _disk_sort_key(t):
+        # Tuples mix None (RDM disks have no thin/diskMode) with bools
+        # and strings, which Python cannot compare directly — wrap
+        # each element so None sorts first within its position.
+        return tuple((0, "") if v is None else (1, v) for v in t)
+
+    expected_disks = sorted((_expected_disk(d) for d in spec.disks), key=_disk_sort_key)
+    actual_disks = sorted((_live_disk(d) for d in live["disks"]), key=_disk_sort_key)
+    _check(
+        "disks (size_gb, datastore, thin, disk_mode, backing, shared, rdm_compatibility)",
+        expected_disks,
+        actual_disks,
+        failures,
+        warnings,
     )
-    _check("disks (size_gb, datastore, thin)", expected_disks, actual_disks, failures, warnings)
     # Disk layout (basic/dynamic): declared-only — vSphere has no
     # property for it — but VMs with dynamic disks carry the layout in
     # extraConfig (lab.diskLayout), so a present-but-wrong live value
@@ -151,6 +198,17 @@ def verify_vm(
         else:
             _check("disk_layout", expected_layout, live_layout, failures, warnings)
     _check("nic count", len(spec.nics), len(live["nics"]), failures, warnings)
+    # NIC device types (emulated card class, or VirtualSriovEthernetCard
+    # for SR-IOV). Skipped when the live summaries carry no type (older
+    # fixtures only record the label).
+    if live["nics"] and all("type" in n for n in live["nics"]):
+        _check(
+            "nic types",
+            sorted(devices.nic_device_class_name(n) for n in spec.nics),
+            sorted(n["type"] for n in live["nics"]),
+            failures,
+            warnings,
+        )
     _check("cdrom", spec.cdrom is not None, live["cdrom"], failures, warnings)
     _check("video_3d", spec.video_3d, live["video_3d"], failures, warnings)
     # Snapshots are core: vcsim creates them and serves the tree back

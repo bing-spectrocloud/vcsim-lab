@@ -60,12 +60,28 @@ DISK_TYPES = ("basic", "dynamic")
 #   mirrored one volume across 2+ disks, data duplicated (RAID 1)
 VOLUME_KINDS = ("simple", "spanned", "striped", "mirrored")
 
+# Disk modes (FlatVer2BackingInfo.diskMode): persistent is the default;
+# independent disks are excluded from snapshots, and
+# independent-nonpersistent additionally discards writes on power-off.
+DISK_MODES = ("persistent", "independent-persistent", "independent-nonpersistent")
+# Disk backings: a plain VMDK, or a Raw Device Mapping (RDM) that maps a
+# LUN directly into the VM. RDMs have no thin/eager provisioning and no
+# diskMode; their deviceName is generated deterministically from the VM
+# name + disk index (see devices.rdm_device_name). vcsim accepts RDM
+# specs and serves the backing back (verified live, govmomi v0.56.2).
+DISK_BACKINGS = ("vmdk", "rdm")
+# RDM compatibility modes: physical passes SCSI commands straight
+# through to the LUN; virtual lets the VMkernel virtualize them.
+RDM_COMPATIBILITY_MODES = ("physicalCompatibility", "virtualCompatibility")
+
 # Per-VM attributes assigned randomly (seeded) or explicitly:
 #   cbt          Changed Block Tracking (ConfigSpec.changeTrackingEnabled)
 #   power_state  runtime power state (poweredOn / poweredOff / suspended)
 #   fast_boot    boot delay 0 ms (boot immediately) vs. the standard delay
 #   tools_status declared VMware Tools status (guest-reported; vcsim never
 #                reports tools, so this is a declared-vs-live comparison)
+#   disk_enable_uuid  disk.EnableUUID extraConfig: whether the guest OS
+#                sees its disks' UUIDs (default FALSE)
 POWER_STATES = ("poweredOn", "poweredOff", "suspended")
 TOOLS_STATUSES = ("toolsNotInstalled", "toolsNotRunning", "toolsOk", "toolsOld")
 RANDOM = "random"
@@ -128,6 +144,16 @@ class DiskSpec:
     thin: bool = True
     eager: bool = False  # only meaningful when thin is False (thick eager-zeroed)
     disk_mode: str = "persistent"
+    # vmdk | rdm — a plain VMDK or a Raw Device Mapping. RDM disks
+    # ignore thin/eager and have no diskMode.
+    backing: str = "vmdk"
+    # RDM compatibility mode (physicalCompatibility | virtualCompatibility);
+    # only meaningful when backing is "rdm".
+    rdm_compatibility: str = "physicalCompatibility"
+    # True for a multi-writer (shared) disk: backing.sharing is set to
+    # sharingMultiWriter, the shape cluster quorum disks use. Requires
+    # backing "vmdk" (validated).
+    shared: bool = False
     # basic | dynamic — the Windows Disk Management distinction.
     # Declared-only: vSphere has no API property for it (see
     # DISK_TYPES). Dynamic disks are Windows-only (validated).
@@ -155,6 +181,12 @@ class VolumeSpec:
 class NicSpec:
     network: str  # logical name from the `networks:` map
     type: str = "vmxnet3"
+    # True for an SR-IOV virtual function (VirtualSriovEthernetCard)
+    # instead of an emulated card. `type` is ignored for SR-IOV NICs
+    # (validated: the two must not be combined). vcsim accepts an
+    # SR-IOV card with an empty SriovBackingInfo; a real vCenter needs
+    # a physical function to bind it to (see devices.build_nic).
+    sriov: bool = False
 
 
 @dataclass
@@ -268,6 +300,11 @@ class VmSpec:
     # no setter API; vcsim always reports toolsNotInstalled, so this is
     # compared declared-vs-live rather than enforced (see README).
     tools_status: str = RANDOM
+    # disk_enable_uuid: whether the guest OS sees its disks' UUIDs
+    # (disk.EnableUUID extraConfig, default FALSE in vSphere). Stamped
+    # into extraConfig at create time; preflight checks it because
+    # guest software may reference disks by UUID.
+    disk_enable_uuid: bool | str = RANDOM
     cpu_hot_add: bool = False
     memory_hot_add: bool = False
     disks: list[DiskSpec] = field(default_factory=list)
@@ -305,6 +342,9 @@ class ResolvedAssignment:
     power_state: str  # poweredOn | poweredOff | suspended
     fast_boot: bool
     tools_status: str  # one of TOOLS_STATUSES
+    # Defaulted so older constructions (tests, callers) keep working;
+    # resolve_random_assignments always sets it explicitly.
+    disk_enable_uuid: bool = False
 
     def expected_boot_delay_ms(self) -> int:
         return FAST_BOOT_DELAY_MS if self.fast_boot else NORMAL_BOOT_DELAY_MS
@@ -315,6 +355,7 @@ class ResolvedAssignment:
             "power_state": self.power_state,
             "fast_boot": self.fast_boot,
             "tools_status": self.tools_status,
+            "disk_enable_uuid": self.disk_enable_uuid,
             "boot_delay_ms": self.expected_boot_delay_ms(),
         }
 
@@ -335,8 +376,9 @@ class LabConfig:
     # (ResourcePool.CreateVApp). VMs name one via `vapp_container:`.
     vapps: list[str] = field(default_factory=list)
     # Seed for the per-VM random attributes (cbt, power_state, fast_boot,
-    # tools_status). Each VM draws from its own RNG seeded with
-    # "<seed>:<vm-name>", so adding a VM never reshuffles the others.
+    # tools_status, disk_enable_uuid). Each VM draws from its own RNG
+    # seeded with "<seed>:<vm-name>", so adding a VM never reshuffles
+    # the others.
     random_seed: int = DEFAULT_RANDOM_SEED
     networks: dict[str, NetworkSpec] = field(default_factory=dict)
     vms: list[VmSpec] = field(default_factory=list)
@@ -779,6 +821,23 @@ def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
                 f"{where}: disk {i} is dynamic, but dynamic disks are a "
                 f"Windows-only concept (guest {guest_id!r} is not Windows)"
             )
+        disk_mode = d.get("disk_mode", "persistent")
+        if disk_mode not in DISK_MODES:
+            raise ConfigError(f"{where}: disk {i} disk_mode must be one of {DISK_MODES}")
+        backing = d.get("backing", "vmdk")
+        if backing not in DISK_BACKINGS:
+            raise ConfigError(f"{where}: disk {i} backing must be one of {DISK_BACKINGS}")
+        rdm_compatibility = d.get("rdm_compatibility", "physicalCompatibility")
+        if rdm_compatibility not in RDM_COMPATIBILITY_MODES:
+            raise ConfigError(
+                f"{where}: disk {i} rdm_compatibility must be one of {RDM_COMPATIBILITY_MODES}"
+            )
+        shared = bool(d.get("shared", False))
+        if shared and backing != "vmdk":
+            raise ConfigError(
+                f"{where}: disk {i} is shared, but shared (multi-writer) "
+                "disks require backing 'vmdk'"
+            )
         disks.append(
             DiskSpec(
                 size_gb=int(_require(d, "size_gb", f"{where} disk {i}")),
@@ -786,7 +845,10 @@ def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
                 datastore=d.get("datastore", "LocalDS_0"),
                 thin=bool(d.get("thin", True)),
                 eager=bool(d.get("eager", False)),
-                disk_mode=d.get("disk_mode", "persistent"),
+                disk_mode=disk_mode,
+                backing=backing,
+                rdm_compatibility=rdm_compatibility,
+                shared=shared,
                 disk_type=disk_type,
             )
         )
@@ -838,7 +900,19 @@ def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
     for i, n in enumerate(raw.get("nics") or []):
         if n.get("type", "vmxnet3") not in NIC_TYPES:
             raise ConfigError(f"{where}: nic {i} type must be one of {NIC_TYPES}")
-        nics.append(NicSpec(network=_require(n, "network", f"{where} nic {i}"), type=n.get("type", "vmxnet3")))
+        sriov = bool(n.get("sriov", False))
+        if sriov and "type" in n:
+            raise ConfigError(
+                f"{where}: nic {i} is SR-IOV, so `type` does not apply "
+                "(an SR-IOV NIC is a virtual function, not an emulated card)"
+            )
+        nics.append(
+            NicSpec(
+                network=_require(n, "network", f"{where} nic {i}"),
+                type=n.get("type", "vmxnet3"),
+                sriov=sriov,
+            )
+        )
     if not nics:
         raise ConfigError(f"{where}: at least one NIC is required")
 
@@ -916,6 +990,9 @@ def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
         raise ConfigError(
             f"{where}: tools_status must be one of {list(TOOLS_STATUSES)} or 'random'"
         )
+    disk_enable_uuid = raw.get("disk_enable_uuid", RANDOM)
+    if disk_enable_uuid is not True and disk_enable_uuid is not False and disk_enable_uuid != RANDOM:
+        raise ConfigError(f"{where}: disk_enable_uuid must be true, false or 'random'")
 
     cpus = int(raw.get("cpus", 2))
     cores = int(raw.get("cores_per_socket", 1))
@@ -953,6 +1030,7 @@ def _load_vm(raw: dict, warnings: list[str]) -> VmSpec:
         power_state=power_state,
         fast_boot=fast_boot,
         tools_status=tools_status,
+        disk_enable_uuid=disk_enable_uuid,
         cpu_hot_add=bool(raw.get("cpu_hot_add", False)),
         memory_hot_add=bool(raw.get("memory_hot_add", False)),
         disks=disks,
@@ -1040,11 +1118,13 @@ def resolve_random_assignments(lab: LabConfig) -> dict[str, ResolvedAssignment]:
     from a per-VM RNG seeded with "<lab seed>:<vm name>", so the
     assignment is deterministic for a given vms.yaml + seed, and adding
     or removing a VM never reshuffles the others. Draws happen in a
-    fixed order (cbt, power_state, fast_boot, tools_status) and only for
-    fields actually set to "random".
+    fixed order (cbt, power_state, fast_boot, tools_status,
+    disk_enable_uuid) and only for fields actually set to "random".
 
-    Templates are exempt from power-state assignment: they always resolve
-    to poweredOff and consume no power-state draw. A VM with no
+    Draw order matters: the RNG is sequential, so a new random field
+    must draw LAST, or every field after it reshuffles. Templates are
+    exempt from power-state assignment: they always resolve to
+    poweredOff and consume no power-state draw. A VM with no
     power_state derives it from the legacy power_on flag.
     """
     resolved = {}
@@ -1063,11 +1143,19 @@ def resolve_random_assignments(lab: LabConfig) -> dict[str, ResolvedAssignment]:
         tools_status = (
             rng.choice(TOOLS_STATUSES) if vm.tools_status == RANDOM else vm.tools_status
         )
+        # Drawn last on purpose: inserting a draw earlier would
+        # reshuffle every field after it (see the docstring).
+        disk_enable_uuid = (
+            rng.choice([True, False])
+            if vm.disk_enable_uuid == RANDOM
+            else bool(vm.disk_enable_uuid)
+        )
         resolved[vm.name] = ResolvedAssignment(
             cbt=cbt,
             power_state=power_state,
             fast_boot=fast_boot,
             tools_status=tools_status,
+            disk_enable_uuid=disk_enable_uuid,
         )
     return resolved
 
@@ -1077,10 +1165,11 @@ def load_declared_assignments(path: str | Path = "environments/default/vms.yaml"
     lab file cannot be loaded — callers then show live values only.
 
     Each entry carries the seed-resolved attributes (cbt, power_state,
-    fast_boot, tools_status, boot_delay_ms) plus the declared disk
-    layout (basic/dynamic types and volumes), the declared snapshot
-    names and the declared folder path. Shared by the query tool and
-    the inventory API so both show the same declared-vs-live view.
+    fast_boot, tools_status, disk_enable_uuid, boot_delay_ms) plus the
+    declared disk layout (basic/dynamic types and volumes), the
+    declared snapshot names and the declared folder path. Shared by
+    the query tool and the inventory API so both show the same
+    declared-vs-live view.
     """
     try:
         lab = load_lab(path)
@@ -1106,6 +1195,11 @@ def load_declared_assignments(path: str | Path = "environments/default/vms.yaml"
 # extraConfig back intact). Basic-only VMs carry no key: basic is the
 # default and needs no marker.
 DISK_LAYOUT_EXTRA_CONFIG_KEY = "lab.diskLayout"
+
+# extraConfig key carrying the disk.EnableUUID setting: whether the
+# guest OS sees its disks' UUIDs. Unlike the layout key, this one is
+# stamped on every VM (TRUE/FALSE) so the live value is unambiguous.
+DISK_ENABLE_UUID_EXTRA_CONFIG_KEY = "disk.EnableUUID"
 
 
 def disk_layout_summary(vm: VmSpec) -> dict:

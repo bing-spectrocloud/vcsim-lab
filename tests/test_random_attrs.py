@@ -164,6 +164,7 @@ class TestValidation(unittest.TestCase):
         self.assertIsNone(vm.power_state)
         self.assertEqual(vm.fast_boot, "random")
         self.assertEqual(vm.tools_status, "random")
+        self.assertEqual(vm.disk_enable_uuid, "random")
 
 
 class TestSpecBuilding(unittest.TestCase):
@@ -208,6 +209,7 @@ class TestLabMatrix(unittest.TestCase):
         self.assertEqual(set(a.power_state for a in assigned.values()), set(config.POWER_STATES))
         self.assertEqual({a.cbt for a in assigned.values()}, {True, False})
         self.assertEqual({a.fast_boot for a in assigned.values()}, {True, False})
+        self.assertEqual({a.disk_enable_uuid for a in assigned.values()}, {True, False})
         self.assertGreaterEqual(len({a.tools_status for a in assigned.values()}), 3)
 
     def test_templates_all_powered_off_appliances_on(self):

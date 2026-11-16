@@ -46,6 +46,13 @@
 #                   VMs declare toolsOk explicitly (Windows, Debian,
 #                   Ubuntu, Solaris, FreeBSD) — the live value is still
 #                   toolsNotInstalled for all of them.
+#     disk_enable_uuid: true | false | random — whether the guest OS
+#                   sees its disks' UUIDs (disk.EnableUUID extraConfig,
+#                   vSphere default FALSE). Stamped into extraConfig on
+#                   every VM (explicit TRUE/FALSE) so the live value is
+#                   unambiguous. preflight checks it: guest software
+#                   may reference disks by UUID, and those references
+#                   do not survive migration to virtio disks.
 # - `snapshots:` lists the snapshots the builder creates after the
 #   VM's device extras (memory=False, quiesce=False — works in any
 #   power state). Each entry names one snapshot plus an optional
@@ -63,6 +70,15 @@
 #   places the VM inside one of the vApp containers in `lab.vapps`.
 # - Disks: `thin: true` = thin provisioned, `thin: false` + `eager: true` =
 #   thick eager-zeroed, `thin: false` + `eager: false` = thick lazy-zeroed.
+#   `disk_mode: persistent | independent-persistent |
+#   independent-nonpersistent` — independent disks are excluded from
+#   snapshots, and non-persistent ones discard writes on power-off.
+#   `backing: vmdk | rdm` — an RDM maps a LUN directly into the VM
+#   (deviceName is generated from the VM name + disk index;
+#   `rdm_compatibility: physicalCompatibility | virtualCompatibility`).
+#   RDM disks ignore thin/eager and have no diskMode. `shared: true`
+#   marks a multi-writer disk (cluster quorum disks); it requires
+#   backing `vmdk`.
 # - `disk_type: basic | dynamic` is the Windows Disk Management
 #   distinction (dynamic disks are Windows-only). vSphere has no API
 #   property for it, so it is declared in the model and stamped into
@@ -72,12 +88,17 @@
 #   like the boot tokens (disk:2 = second disk).
 # - `datastore` names must exist in the vcsim inventory (default compose file
 #   creates LocalDS_0..2). The builder lists available datastores on error.
+# - NICs: `sriov: true` builds an SR-IOV virtual function
+#   (VirtualSriovEthernetCard) instead of an emulated card; `type` does
+#   not apply to SR-IOV NICs. vcsim accepts an empty SriovBackingInfo;
+#   a real vCenter needs a physical function to bind it to.
 
 lab:
   datacenter: DC0
   cluster: DC0_C0
   # Seed for the per-VM random attributes (cbt, power_state,
-  # fast_boot, tools_status). Same seed -> same assignment.
+  # fast_boot, tools_status, disk_enable_uuid). Same seed -> same
+  # assignment.
   random_seed: 42
   # VM folders created under the datacenter's vm folder. Paths are
   # nested (up to 3 levels deep) so folder-subtree matching has a real
@@ -176,6 +197,7 @@ vms:
     cbt: true
     fast_boot: random
     tools_status: toolsOk
+    disk_enable_uuid: true   # SQL Server references disks by UUID; preflight checks it
     disks:
       - { size_gb: 100, controller: pvscsi, datastore: LocalDS_0, thin: true }
       - { size_gb: 500, controller: pvscsi, datastore: LocalDS_1, thin: false, eager: true, disk_type: dynamic }
@@ -395,6 +417,7 @@ vms:
     cbt: true
     fast_boot: random
     tools_status: random
+    disk_enable_uuid: true   # DB host with UUID-referenced disks; preflight checks it
     disks:
       - { size_gb: 80, controller: pvscsi, datastore: LocalDS_0, thin: true }
       - { size_gb: 500, controller: pvscsi, datastore: LocalDS_1, thin: false, eager: true }
@@ -408,7 +431,7 @@ vms:
       - { name: pre-upgrade, description: "Before the database major-version upgrade" }
 
   - name: sles15-sap
-    annotation: "SLES 15 app host, CD-ROM-first boot (install media), vTPM, OS + SAP data disk"
+    annotation: "SLES 15 app host, CD-ROM-first boot (install media), vTPM, OS + SAP data disk + shared quorum disk"
     guest_id: sles15_64Guest
     os_label: "SUSE Linux Enterprise 15 (64-bit)"
     cpus: 8
@@ -427,6 +450,7 @@ vms:
     disks:
       - { size_gb: 150, controller: nvme, datastore: LocalDS_0, thin: true }
       - { size_gb: 200, controller: nvme, datastore: LocalDS_1, thin: true }
+      - { size_gb: 10, controller: nvme, datastore: LocalDS_0, thin: true, shared: true }
     nics:
       - { network: prod, type: vmxnet3 }
     cdrom: { backing: client }
@@ -454,7 +478,7 @@ vms:
     disks:
       - { size_gb: 60, controller: lsi-logic, datastore: LocalDS_2, thin: true }
       - { size_gb: 200, controller: lsi-sas, datastore: LocalDS_2, thin: true }
-      - { size_gb: 200, controller: lsi-sas, datastore: LocalDS_2, thin: true }
+      - { size_gb: 200, controller: lsi-sas, datastore: LocalDS_2, backing: rdm }
     nics:
       - { network: vm-network, type: e1000e }
     cdrom: null
@@ -506,7 +530,7 @@ vms:
     tools_status: toolsOld
     disks:
       - { size_gb: 60, controller: lsi-logic, datastore: LocalDS_2, thin: false, eager: false }
-      - { size_gb: 100, controller: lsi-logic, datastore: LocalDS_2, thin: true }
+      - { size_gb: 100, controller: lsi-logic, datastore: LocalDS_2, thin: true, disk_mode: independent-nonpersistent }
     nics:
       - { network: vm-network, type: e1000 }
     cdrom: null
@@ -771,7 +795,7 @@ vms:
     disks:
       - { size_gb: 40, controller: lsi-sas, datastore: LocalDS_2, thin: true }
     nics:
-      - { network: vm-network, type: e1000 }   # WAN
+      - { network: vm-network, sriov: true }   # WAN (SR-IOV virtual function)
       - { network: prod, type: vmxnet3 }       # LAN
     cdrom: null
     boot_order: [disk]

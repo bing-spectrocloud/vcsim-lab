@@ -20,7 +20,7 @@ import json
 from pyVmomi import vim
 
 from . import devices
-from .config import DISK_LAYOUT_EXTRA_CONFIG_KEY
+from .config import DISK_ENABLE_UUID_EXTRA_CONFIG_KEY, DISK_LAYOUT_EXTRA_CONFIG_KEY
 from .vcenter import (
     connect,
     disconnect,
@@ -169,12 +169,22 @@ def _gpu_short(gpu: dict) -> str:
     return f"{mode}:{detail}" if detail else mode
 
 
+_RDM_BACKING_CLASSES = (
+    vim.vm.device.VirtualDisk.RawDiskMappingVer1BackingInfo,
+    vim.vm.device.VirtualDisk.RawDiskVer2BackingInfo,
+)
+
+
 def _disk_info(device, datastore_names: dict) -> dict:
     backing = device.backing
     ds_name = None
     file_name = getattr(backing, "fileName", "") or ""
     if file_name.startswith("["):
         ds_name = file_name[1:].split("]", 1)[0]
+    # isinstance, not a __name__ comparison: pyVmomi class names are
+    # fully dotted ("vim.vm.device.VirtualDisk.…"), so a short-name
+    # match never fires.
+    is_rdm = isinstance(backing, _RDM_BACKING_CLASSES)
     return {
         "label": device.deviceInfo.label,
         "capacity_gb": round(device.capacityInKB / 1024 / 1024, 1),
@@ -182,6 +192,13 @@ def _disk_info(device, datastore_names: dict) -> dict:
         "thin": getattr(backing, "thinProvisioned", None),
         "eagerly_scrubbed": getattr(backing, "eagerlyScrub", None),
         "disk_mode": getattr(backing, "diskMode", None),
+        # RDM disks have no thin/eager provisioning and no diskMode
+        # (vcsim serves None for all three); the backing type and
+        # compatibility mode are what identify them.
+        "backing": "rdm" if is_rdm else "vmdk",
+        "rdm_compatibility": getattr(backing, "compatibilityMode", None) if is_rdm else None,
+        "rdm_device_name": getattr(backing, "deviceName", None) if is_rdm else None,
+        "shared": getattr(backing, "sharing", None) == "sharingMultiWriter",
         "controller_key": device.controllerKey,
         "unit_number": device.unitNumber,
         "file": file_name,
@@ -207,6 +224,7 @@ def _nic_info(device) -> dict:
         "backing": backing_type,
         "mac": device.macAddress,
         "connected": bool(device.connectable.connected) if device.connectable else None,
+        "sriov": isinstance(device, vim.vm.device.VirtualSriovEthernetCard),
     }
 
 
@@ -251,10 +269,12 @@ def summarize_vm(
     # back intact). None for basic-only VMs and for VMs built before
     # the feature existed.
     disk_layout = None
+    disk_enable_uuid = None
     for opt in config.extraConfig or []:
         if opt.key == DISK_LAYOUT_EXTRA_CONFIG_KEY:
             disk_layout = opt.value
-            break
+        elif opt.key == DISK_ENABLE_UUID_EXTRA_CONFIG_KEY:
+            disk_enable_uuid = str(opt.value).strip().lower() == "true"
 
     datastore_names = {}
     for ds in vm.datastore or []:
@@ -342,6 +362,9 @@ def summarize_vm(
         # VMs); the declared per-disk types live on the disk entries
         # above when the lab file was loaded.
         "disk_layout": disk_layout,
+        # Live disk.EnableUUID from extraConfig (None for VMs built
+        # before the feature existed — the vSphere default is FALSE).
+        "disk_enable_uuid": disk_enable_uuid,
         "nics": [_nic_info(n) for n in nics],
         "tools_status": tools_status,
         "tools_running_status": tools_running_status,

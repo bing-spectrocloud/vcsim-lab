@@ -132,7 +132,11 @@ class ResolvedRefs:
 
 
 def build_create_spec(
-    spec: VmSpec, plan: VmPlan, refs: ResolvedRefs, cbt: bool = False
+    spec: VmSpec,
+    plan: VmPlan,
+    refs: ResolvedRefs,
+    cbt: bool = False,
+    disk_enable_uuid: bool = False,
 ) -> vim.vm.ConfigSpec:
     """Build the CreateVM_Task spec.
 
@@ -141,7 +145,9 @@ def build_create_spec(
     as separate reconfig tasks — see devices.py for why. `cbt` sets
     changeTrackingEnabled (Changed Block Tracking, used by backup
     products to read only changed blocks); vcsim accepts it in the
-    create spec and serves it back.
+    create spec and serves it back. `disk_enable_uuid` stamps the
+    disk.EnableUUID extraConfig key (TRUE/FALSE, always stamped so the
+    live value is unambiguous — the vSphere default is FALSE).
     """
     device_change: list[vim.vm.device.VirtualDeviceSpec] = []
 
@@ -163,6 +169,14 @@ def build_create_spec(
                 eager=disk.eager,
                 disk_mode=disk.disk_mode,
                 disk_index=disk_plan.index,
+                backing=disk.backing,
+                rdm_compatibility=disk.rdm_compatibility,
+                rdm_device=(
+                    devices.rdm_device_name(spec.name, disk_plan.index)
+                    if disk.backing == "rdm"
+                    else None
+                ),
+                shared=disk.shared,
             )
         )
 
@@ -205,6 +219,10 @@ def build_create_spec(
     )
 
     extra = dict(spec.extra_config)
+    # disk.EnableUUID is always stamped (explicit TRUE/FALSE), so the
+    # live value never depends on the vSphere default — except when the
+    # VM's own extra_config already sets it, which wins.
+    extra.setdefault("disk.EnableUUID", "TRUE" if disk_enable_uuid else "FALSE")
     if spec.vapp is not None:
         # vcsim accepts vAppConfig on CreateVM and serves it back intact.
         config.vAppConfig = devices.build_vapp_config(spec.vapp)
