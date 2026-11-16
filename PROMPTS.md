@@ -581,3 +581,34 @@ redeploy; a re-run of build_lab.py over an existing lab does NOT
 retrofit extraConfig (no reconcile step — same as diskLayout).
 298 tests (37 new in `tests/test_preflight_settings.py`, plus 2
 assertions added to `tests/test_random_attrs.py`).
+
+## 21. 2026-11-16 01:18 — Three more VMs: 2008 R2, XP x64, Photon
+
+> Add three VMs to vcsim-lab, one with Microsoft Windows 2008 R2
+> Server, the other winXPPro64Guest, and VMware Photon OS
+
+Done. Lab is now 26 VMs / 46 disks (was 23 / 43), 13 BIOS / 13
+EFI (was 11 / 12), snapshots still 16. The two legacy Windows
+guests join centos8-legacy in lab/Lab/Legacy (now 3 VMs); Photon
+is a container host in lab/Prod/Web (now 3 VMs):
+
+- win2008r2-legacy — windows7Server64Guest, BIOS, vmx-19, 2 vCPU /
+  4 GB, 60 GB thin lsi-logic disk, e1000, poweredOff, toolsOld.
+- winxp64-legacy — winXPPro64Guest, BIOS, vmx-19, 1 vCPU / 2 GB,
+  40 GB thin lsi-logic disk, e1000, poweredOff, toolsOld.
+- photon-container — vmwarePhoton64Guest, EFI, vmx-20, 2 vCPU /
+  4 GB, 50 GB thin nvme disk, vmxnet3 on prod, random power/tools.
+
+windows7Server64Guest and winXPPro64Guest were added to
+KNOWN_GUEST_IDS (vmwarePhoton64Guest was already there). Pinned
+counts updated in 8 test files (26 VMs, 46 disks, folder map +
+distribution, Prod subtree list, snapshot distribution 0:15/1:6/
+2:5); one new test pins the three guest IDs, folders, firmware
+and power states. Suite 299 passed. Live-verified: full build
+26 VMs / 98 steps / 0 failed, verify 0 failures; query confirms
+all three with the right guest IDs, folders and devices.
+Preflight against the enlarged lab: warm 0/4/19, cold 0/10/13
+over 23 assessed VMs — the two legacy Windows guests warn on
+guest-os in both contexts (in neither list) and block warm
+(powered off); Photon passes guest-os cold and warns warm (not
+Cirrus-qualified), warn verdict in both.

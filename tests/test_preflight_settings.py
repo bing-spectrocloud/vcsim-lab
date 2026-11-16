@@ -536,8 +536,9 @@ class TestLabMatrix(unittest.TestCase):
             (v.name, n) for v in lab.vms for n in v.nics if n.sriov
         ]
         self.assertEqual([n for n, _ in sriov], ["opnsense-fw"])
-        # 43 disks (was 42 — sles15-sap gained its quorum disk).
-        self.assertEqual(sum(len(v.disks) for v in lab.vms), 43)
+        # 46 disks (was 43 — win2008r2-legacy, winxp64-legacy and
+        # photon-container each add one OS disk).
+        self.assertEqual(sum(len(v.disks) for v in lab.vms), 46)
 
     def test_dev_lab_loads_with_enable_uuid(self):
         lab = config.load_lab(DEV_LAB)

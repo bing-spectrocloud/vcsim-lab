@@ -273,6 +273,54 @@ vms:
     cdrom: null
     boot_order: [disk]
 
+  - name: win2008r2-legacy
+    annotation: "Windows Server 2008 R2 legacy host, BIOS, single thin OS disk"
+    guest_id: windows7Server64Guest
+    os_label: "Microsoft Windows Server 2008 R2 (64-bit)"
+    cpus: 2
+    cores_per_socket: 1
+    memory_mb: 4096
+    hardware_version: vmx-19
+    firmware: bios
+    secure_boot: false
+    tpm: false
+    folder: lab/Lab/Legacy
+    resource_pool: lab-general
+    power_state: poweredOff
+    cbt: random
+    fast_boot: false
+    tools_status: toolsOld
+    disks:
+      - { size_gb: 60, controller: lsi-logic, datastore: LocalDS_2, thin: true }
+    nics:
+      - { network: vm-network, type: e1000 }
+    cdrom: null
+    boot_order: [disk, network]
+
+  - name: winxp64-legacy
+    annotation: "Windows XP Professional 64-bit legacy desktop, BIOS, single thin OS disk"
+    guest_id: winXPPro64Guest
+    os_label: "Microsoft Windows XP Professional (64-bit)"
+    cpus: 1
+    cores_per_socket: 1
+    memory_mb: 2048
+    hardware_version: vmx-19
+    firmware: bios
+    secure_boot: false
+    tpm: false
+    folder: lab/Lab/Legacy
+    resource_pool: lab-general
+    power_state: poweredOff
+    cbt: random
+    fast_boot: false
+    tools_status: toolsOld
+    disks:
+      - { size_gb: 40, controller: lsi-logic, datastore: LocalDS_2, thin: true }
+    nics:
+      - { network: vm-network, type: e1000 }
+    cdrom: null
+    boot_order: [disk, network]
+
   # ---- GPU -------------------------------------------------------------
   - name: ubuntu-gpu-llm
     annotation: "Ubuntu LLM inference node, PCI passthrough GPU (T4 class), OS + model disk"
@@ -399,6 +447,30 @@ vms:
     boot_order: [network, disk]
     snapshots:
       - { name: pre-patch, description: "Before the apt upgrade" }
+
+  - name: photon-container
+    annotation: "VMware Photon OS container host, EFI, single thin OS disk"
+    guest_id: vmwarePhoton64Guest
+    os_label: "VMware Photon OS (64-bit)"
+    cpus: 2
+    cores_per_socket: 1
+    memory_mb: 4096
+    hardware_version: vmx-20
+    firmware: efi
+    secure_boot: false
+    tpm: false
+    folder: lab/Prod/Web
+    resource_pool: lab-general
+    power_state: random
+    cbt: random
+    fast_boot: random
+    tools_status: random
+    disks:
+      - { size_gb: 50, controller: nvme, datastore: LocalDS_0, thin: true }
+    nics:
+      - { network: prod, type: vmxnet3 }
+    cdrom: null
+    boot_order: [disk, network]
 
   - name: rhel9-db
     annotation: "RHEL 9 database host, BIOS: OS + data + log disks across 3 datastores"

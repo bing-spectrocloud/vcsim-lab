@@ -96,6 +96,8 @@ NORMAL_BOOT_DELAY_MS = 3000
 KNOWN_GUEST_IDS = {
     "windows11_64Guest",
     "windows9_64Guest",  # Windows 10 (64-bit)
+    "windows7Server64Guest",  # Windows Server 2008 R2 (64-bit)
+    "winXPPro64Guest",  # Windows XP Professional (64-bit)
     "windows9Server64Guest",  # Windows Server 2016
     "windows2019srv_64Guest",
     "windows2019srvNext_64Guest",  # Windows Server 2022

@@ -42,7 +42,7 @@ def _vm_spec(**overrides):
 class TestConfig(unittest.TestCase):
     def test_lab_loads(self):
         lab = config.load_lab(LAB)
-        self.assertEqual(len(lab.vms), 23)
+        self.assertEqual(len(lab.vms), 26)
         self.assertEqual(lab.datacenter, "DC0")
         self.assertEqual(lab.cluster, "DC0_C0")
 
@@ -69,6 +69,25 @@ class TestConfig(unittest.TestCase):
         self.assertIn(("cdrom", "disk"), boots)  # install-media-first
         self.assertTrue(any(len(v.disks) >= 3 for v in lab.vms))
         self.assertTrue(any(len(v.nics) >= 2 for v in lab.vms))
+
+    def test_legacy_and_photon_guests(self):
+        # Entry 21: the three added VMs, pinned by guest id — the two
+        # legacy Windows guests are the oldest OSes in the lab, and
+        # Photon is the only VMware-native Linux guest.
+        lab = config.load_lab(LAB)
+        by_name = {v.name: v for v in lab.vms}
+        self.assertEqual(by_name["win2008r2-legacy"].guest_id, "windows7Server64Guest")
+        self.assertEqual(by_name["winxp64-legacy"].guest_id, "winXPPro64Guest")
+        self.assertEqual(by_name["photon-container"].guest_id, "vmwarePhoton64Guest")
+        self.assertEqual(by_name["win2008r2-legacy"].folder, "lab/Lab/Legacy")
+        self.assertEqual(by_name["winxp64-legacy"].folder, "lab/Lab/Legacy")
+        self.assertEqual(by_name["photon-container"].folder, "lab/Prod/Web")
+        # The legacy pair are powered off and BIOS; Photon is EFI.
+        self.assertEqual(by_name["win2008r2-legacy"].power_state, "poweredOff")
+        self.assertEqual(by_name["winxp64-legacy"].power_state, "poweredOff")
+        self.assertEqual(by_name["win2008r2-legacy"].firmware, "bios")
+        self.assertEqual(by_name["winxp64-legacy"].firmware, "bios")
+        self.assertEqual(by_name["photon-container"].firmware, "efi")
 
     def test_hex_ids(self):
         self.assertEqual(config.parse_hex_id("0x10de", "vendor"), 0x10DE)
