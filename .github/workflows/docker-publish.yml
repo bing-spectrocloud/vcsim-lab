@@ -68,8 +68,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            squarebing/vcsim-lab:latest
-            squarebing/vcsim-lab:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/vcsim-lab:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/vcsim-lab:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
