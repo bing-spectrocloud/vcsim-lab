@@ -702,3 +702,23 @@ attributes. Suite 318 passed. README counts refreshed (were stale
 at 23 VMs). Full build 31 VMs / 111 steps / 0 failed, verify 0
 failures (5 Secure Boot + 27 tools-status warnings); saved model
 re-saved and restart round-trip verified (31 VMs restored).
+
+## 24. clean-rhel9 annotation: zero warnings now (2026-11-16)
+
+Prompt (in the preflight chat): "clean-rhel9 still has two
+warnings. (tool-status and vm-arch). Can you fix it some this VM
+will have no warnings?"
+
+The fix landed in preflight (entry 86): preflight detects the
+simulator from AboutInfo.fullName and reports tools-status and
+vm-arch as INFO against vcsim instead of WARN. clean-rhel9 now
+passes with 28 pass / 3 info / 1 skip / 0 warnings, live-verified
+against the local lab. This entry updates the lab's own words,
+which said the two warnings were unavoidable: the Clean-room
+section comment and the VM annotation in
+environments/default/vms.yaml, and the comment in
+test_clean_room_vm_passes_every_vm_check. No lab attributes
+changed — vcsim still reports no Tools data; only preflight's
+reading of it changed. The live VM's annotation was updated in
+place via ReconfigVM_Task and the model re-saved, so the running
+lab matches the YAML without a rebuild.

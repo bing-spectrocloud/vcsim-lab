@@ -546,10 +546,11 @@ class TestLabMatrix(unittest.TestCase):
 
     def test_clean_room_vm_passes_every_vm_check(self):
         # clean-rhel9 is the control VM: under the cold context with
-        # --ignore-host-transport it passes every VM-scope check except
-        # tools-status and vm-arch, which vcsim cannot satisfy (it
-        # reports no Tools data at all). A future edit must not
-        # silently give it a findings trigger.
+        # --ignore-host-transport it passes every VM-scope check with
+        # zero warnings. vcsim still reports no Tools data, but
+        # preflight detects the simulator (entry 86) and reports
+        # tools-status and vm-arch as INFO there. A future edit must
+        # not silently give it a findings trigger.
         lab = config.load_lab(LAB)
         vm = {v.name: v for v in lab.vms}["clean-rhel9"]
         self.assertEqual(vm.guest_id, "rhel9_64Guest")

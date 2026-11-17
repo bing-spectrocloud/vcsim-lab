@@ -1030,15 +1030,13 @@ vms:
 
   # ---- Clean-room ------------------------------------------------------
   # clean-rhel9: the control VM — passes every VM-scope check under the
-  # cold context with --ignore-host-transport, except the two checks
-  # vcsim cannot satisfy: tools-status (vcsim always reports
-  # toolsNotInstalled — Tools status is guest-reported with no setter
-  # API) and vm-arch (vcsim serves no Tools data, so the arch is
-  # always unrecorded). Both warn on every vcsim VM; on a real
-  # vCenter with Tools running, this VM would pass clean. Use it to
-  # verify the pass path end to end.
+  # cold context with --ignore-host-transport, with zero warnings.
+  # vcsim still reports no Tools data (toolsNotInstalled, arch
+  # unrecorded), but preflight detects the simulator (entry 86) and
+  # reports tools-status and vm-arch as INFO there instead of WARN.
+  # Use it to verify the pass path end to end.
   - name: clean-rhel9
-    annotation: "Clean-room RHEL 9 VM: no blockers, no warnings except tools-status/vm-arch (vcsim reports no Tools data)"
+    annotation: "Clean-room RHEL 9 VM: no blockers, no warnings — the control VM (preflight entry 86 reports the Tools/arch checks as INFO against vcsim)"
     guest_id: rhel9_64Guest
     os_label: "Red Hat Enterprise Linux 9 (64-bit)"
     cpus: 2
