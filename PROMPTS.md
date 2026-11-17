@@ -722,3 +722,35 @@ changed — vcsim still reports no Tools data; only preflight's
 reading of it changed. The live VM's annotation was updated in
 place via ReconfigVM_Task and the model re-saved, so the running
 lab matches the YAML without a rebuild.
+
+CORRECTION to entry 24 (same day): the model re-save did NOT
+work as described. Saving from a vcsim that was itself loaded
+from a model made govc object.save write most objects twice
+(539 files), and the reloaded vcsim died on the first duplicate
+Datastore ("mkdir .../DC0-LocalDS_0: file exists"). The lab was
+recovered by deduping the model (keep the lowest-numbered file
+per MoRef — the first copy is the complete one; later copies
+can miss properties), and the restart round-trip then verified
+clean (31 VMs, 0 failures, 32 warnings, clean-rhel9 passes).
+The stale vm-271/275/279 references in the container view are
+unrelated: vcsim's deleted stock VMs, still listed in a
+resource pool since the original build. See entry 25 for the
+permanent fix.
+
+## 25. save-model.sh dedupes the saved model (2026-11-16)
+
+Follow-up to entry 24's broken re-save. govc object.save from a
+model-loaded vcsim writes most objects twice (same MoRef,
+adjacent sequence numbers — the loader registers them under two
+paths and govc's traversal sees both); a model with duplicate
+Datastore files cannot load (the loader mkdirs the same
+datastore directory twice and aborts). save-model.sh now runs a
+dedupe pass after the save: keep the lowest-numbered file per
+MoRef (the first copy is the complete one — later copies can
+miss properties, e.g. a network's name), delete the rest, and
+report how many were removed. Verified end to end: re-saved
+from the running (model-loaded) vcsim, 220 duplicates removed,
+319 files, restart loads clean, verify 31 VMs / 0 failures /
+32 warnings. Note govc object.save -f wipes files but not the
+old per-object subdirectories in the model dir (harmless —
+the loader ignores them).

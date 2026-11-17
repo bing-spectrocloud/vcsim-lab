@@ -59,4 +59,28 @@ export GOVC_INSECURE=true
 # empty inventory even though the objects load.) -f removes any previous
 # save in the directory first.
 "$GOVC" object.save -f -d "$ENV_MODEL_DIR"
+# Dedupe: when the running vcsim was itself loaded from a model,
+# object.save writes most objects TWICE (same MoRef, adjacent
+# sequence numbers — the loader registers them under two paths and
+# govc's traversal sees both). A model with duplicate Datastore
+# files does not load: the loader tries to mkdir the same datastore
+# directory twice and aborts with "file exists". The first copy is
+# the complete one (later copies can miss properties, e.g. the
+# network name), so keep the lowest-numbered file per MoRef.
+python3 - "$ENV_MODEL_DIR" <<'PYEOF'
+import os, re, sys
+d = sys.argv[1]
+groups = {}
+for f in sorted(os.listdir(d)):
+    m = re.match(r"^(\d+)-([^-]+)-(.+)\.xml$", f)
+    if m:
+        groups.setdefault(m.group(3), []).append(f)
+removed = 0
+for files in groups.values():
+    for f in files[1:]:
+        os.remove(os.path.join(d, f))
+        removed += 1
+if removed:
+    print(f"removed {removed} duplicate object files (saved from a model-loaded vcsim)")
+PYEOF
 echo "model saved to ./$ENV_MODEL_DIR ($(find "$ENV_MODEL_DIR" -type f | wc -l) files)"
